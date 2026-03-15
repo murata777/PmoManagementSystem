@@ -33,24 +33,21 @@ db.serialize(() => {
     FOREIGN KEY (project_id) REFERENCES projects(id)
   )`);
 
-  db.run(`CREATE TABLE IF NOT EXISTS members (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    role TEXT,
-    department TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-  )`);
-
   db.run(`CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     is_temp_password INTEGER DEFAULT 1,
+    role TEXT,
+    department TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
   )`);
+
+  // 既存DBへのマイグレーション（カラム追加）
+  db.run(`ALTER TABLE users ADD COLUMN role TEXT`, () => {});
+  db.run(`ALTER TABLE users ADD COLUMN department TEXT`, () => {});
 });
 
 module.exports = db;
