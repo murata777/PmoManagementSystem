@@ -87,7 +87,10 @@ export default function Login({ onLogin }) {
             </Button>
           </Box>
 
-          <Box sx={{ mt: 2, textAlign: 'center' }}>
+          <Box sx={{ mt: 2, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <Typography variant="body2">
+              <Link to="/forgot-password" style={{ color: '#1976d2' }}>パスワードをお忘れですか？</Link>
+            </Typography>
             <Typography variant="body2">
               アカウントをお持ちでない方は{' '}
               <Link to="/register" style={{ color: '#1976d2' }}>新規登録</Link>

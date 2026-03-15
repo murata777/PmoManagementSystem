@@ -100,6 +100,42 @@ router.post('/change-password', authMiddleware, async (req, res) => {
   }
 });
 
+// POST /api/auth/forgot-password
+router.post('/forgot-password', async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'メールアドレスは必須です' });
+
+  try {
+    const { rows } = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    const user = rows[0];
+    // ユーザーが存在しない場合も同じメッセージを返す（セキュリティ対策）
+    if (!user) {
+      return res.json({ message: `初期パスワードを ${email} に送信しました` });
+    }
+
+    const tempPassword = generateTempPassword();
+    const hash = await bcrypt.hash(tempPassword, 10);
+
+    await pool.query(
+      'UPDATE users SET password_hash=$1, is_temp_password=1, updated_at=NOW() WHERE id=$2',
+      [hash, user.id]
+    );
+
+    try {
+      await sendInitialPassword(email, user.name, tempPassword);
+      res.json({ message: `初期パスワードを ${email} に送信しました` });
+    } catch (mailErr) {
+      console.error('Mail error:', mailErr.message);
+      res.json({
+        message: 'パスワードをリセットしました（メール送信に失敗しました）',
+        tempPassword, // 開発環境用
+      });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/auth/me
 router.get('/me', authMiddleware, async (req, res) => {
   try {

@@ -15,6 +15,7 @@ import Members from './pages/Members';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import ChangePassword from './pages/ChangePassword';
+import ForgotPassword from './pages/ForgotPassword';
 import { getStoredUser, clearAuth } from './auth';
 
 const DRAWER_WIDTH = 220;
@@ -110,6 +111,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login onLogin={handleLogin} />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="*" element={<Navigate to="/login" />} />
         </Routes>
       )}
