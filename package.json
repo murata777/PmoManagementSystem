@@ -1,0 +1,12 @@
+{
+  "name": "pmo-management-system",
+  "version": "1.0.0",
+  "description": "PMO Management System built with Node.js and React",
+  "scripts": {
+    "server": "node server/index.js",
+    "client": "cd client && npx vite",
+    "dev": "concurrently \"npm run server\" \"npm run client\""
+  },
+  "keywords": ["pmo", "project-management", "nodejs", "react"],
+  "license": "ISC"
+}
