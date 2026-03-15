@@ -41,6 +41,16 @@ db.serialize(() => {
     department TEXT,
     created_at TEXT DEFAULT (datetime('now'))
   )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    is_temp_password INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`);
 });
 
 module.exports = db;

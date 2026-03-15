@@ -3,5 +3,6 @@ client/node_modules/
 server/node_modules/
 server/pmo.db
 dist/
+server/.env
 .env
 *.log
