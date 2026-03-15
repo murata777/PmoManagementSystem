@@ -4,7 +4,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
-const db = require('../database');
+const pool = require('../database');
 const { sendInitialPassword } = require('../mailer');
 const authMiddleware = require('../middleware/auth');
 
@@ -18,42 +18,42 @@ router.post('/register', async (req, res) => {
   const { name, email } = req.body;
   if (!name || !email) return res.status(400).json({ error: '名前とメールアドレスは必須です' });
 
-  db.get('SELECT id FROM users WHERE email = ?', [email], async (err, existing) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (existing) return res.status(409).json({ error: 'このメールアドレスは既に登録されています' });
+  try {
+    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existing.rows[0]) return res.status(409).json({ error: 'このメールアドレスは既に登録されています' });
 
     const tempPassword = generateTempPassword();
     const hash = await bcrypt.hash(tempPassword, 10);
     const id = uuidv4();
 
-    db.run(
-      'INSERT INTO users (id, name, email, password_hash, is_temp_password) VALUES (?, ?, ?, ?, 1)',
-      [id, name, email, hash],
-      async (err) => {
-        if (err) return res.status(500).json({ error: err.message });
-        try {
-          await sendInitialPassword(email, name, tempPassword);
-          res.status(201).json({ message: `初期パスワードを ${email} に送信しました` });
-        } catch (mailErr) {
-          // メール失敗時もアカウントは作成済みのため情報を返す（開発用）
-          console.error('Mail error:', mailErr.message);
-          res.status(201).json({
-            message: 'アカウントを作成しました（メール送信に失敗しました）',
-            tempPassword, // 開発環境用: 本番では削除してください
-          });
-        }
-      }
+    await pool.query(
+      'INSERT INTO users (id, name, email, password_hash, is_temp_password) VALUES ($1,$2,$3,$4,1)',
+      [id, name, email, hash]
     );
-  });
+
+    try {
+      await sendInitialPassword(email, name, tempPassword);
+      res.status(201).json({ message: `初期パスワードを ${email} に送信しました` });
+    } catch (mailErr) {
+      console.error('Mail error:', mailErr.message);
+      res.status(201).json({
+        message: 'アカウントを作成しました（メール送信に失敗しました）',
+        tempPassword,
+      });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST /api/auth/login
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'メールアドレスとパスワードは必須です' });
 
-  db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const { rows } = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    const user = rows[0];
     if (!user) return res.status(401).json({ error: 'メールアドレスまたはパスワードが正しくありません' });
 
     const valid = await bcrypt.compare(password, user.password_hash);
@@ -70,7 +70,9 @@ router.post('/login', (req, res) => {
       user: { id: user.id, name: user.name, email: user.email },
       isTempPassword: user.is_temp_password === 1,
     });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST /api/auth/change-password
@@ -79,32 +81,38 @@ router.post('/change-password', authMiddleware, async (req, res) => {
   if (!currentPassword || !newPassword) return res.status(400).json({ error: '現在のパスワードと新しいパスワードは必須です' });
   if (newPassword.length < 8) return res.status(400).json({ error: 'パスワードは8文字以上で入力してください' });
 
-  db.get('SELECT * FROM users WHERE id = ?', [req.user.id], async (err, user) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const { rows } = await pool.query('SELECT * FROM users WHERE id = $1', [req.user.id]);
+    const user = rows[0];
     if (!user) return res.status(404).json({ error: 'ユーザーが見つかりません' });
 
     const valid = await bcrypt.compare(currentPassword, user.password_hash);
     if (!valid) return res.status(401).json({ error: '現在のパスワードが正しくありません' });
 
     const newHash = await bcrypt.hash(newPassword, 10);
-    db.run(
-      "UPDATE users SET password_hash = ?, is_temp_password = 0, updated_at = datetime('now') WHERE id = ?",
-      [newHash, req.user.id],
-      (err) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ message: 'パスワードを変更しました' });
-      }
+    await pool.query(
+      'UPDATE users SET password_hash=$1, is_temp_password=0, updated_at=NOW() WHERE id=$2',
+      [newHash, req.user.id]
     );
-  });
+    res.json({ message: 'パスワードを変更しました' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // GET /api/auth/me
-router.get('/me', authMiddleware, (req, res) => {
-  db.get('SELECT id, name, email, is_temp_password FROM users WHERE id = ?', [req.user.id], (err, user) => {
-    if (err) return res.status(500).json({ error: err.message });
+router.get('/me', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, name, email, is_temp_password FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    const user = rows[0];
     if (!user) return res.status(404).json({ error: 'ユーザーが見つかりません' });
     res.json({ ...user, isTempPassword: user.is_temp_password === 1 });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;
