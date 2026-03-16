@@ -46,6 +46,13 @@ export const dashboardApi = {
   getStats: () => api.get('/dashboard'),
 };
 
+export const customFieldsApi = {
+  getAll: (projectId) => api.get(`/projects/${projectId}/fields`),
+  create: (projectId, data) => api.post(`/projects/${projectId}/fields`, data),
+  update: (projectId, fieldId, data) => api.put(`/projects/${projectId}/fields/${fieldId}`, data),
+  delete: (projectId, fieldId) => api.delete(`/projects/${projectId}/fields/${fieldId}`),
+};
+
 export const groupsApi = {
   getAll: () => api.get('/groups'),
   getById: (id) => api.get(`/groups/${id}`),
