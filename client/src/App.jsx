@@ -7,11 +7,13 @@ import {
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import FolderIcon from '@mui/icons-material/Folder';
 import PeopleIcon from '@mui/icons-material/People';
+import GroupIcon from '@mui/icons-material/Group';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import Dashboard from './pages/Dashboard';
 import Projects from './pages/Projects';
 import ProjectDetail from './pages/ProjectDetail';
 import Members from './pages/Members';
+import Groups from './pages/Groups';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import ChangePassword from './pages/ChangePassword';
@@ -23,6 +25,7 @@ const DRAWER_WIDTH = 220;
 const navItems = [
   { text: 'ダッシュボード', icon: <DashboardIcon />, path: '/' },
   { text: 'プロジェクト', icon: <FolderIcon />, path: '/projects' },
+  { text: 'グループ', icon: <GroupIcon />, path: '/groups' },
   { text: 'メンバー', icon: <PeopleIcon />, path: '/members' },
 ];
 
@@ -89,6 +92,7 @@ function AppLayout({ user, onLogout }) {
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/:id" element={<ProjectDetail />} />
           <Route path="/members" element={<Members />} />
+          <Route path="/groups" element={<Groups />} />
           <Route path="/change-password" element={<ChangePassword />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>

@@ -11,38 +11,6 @@ const pool = new Pool({
 
 async function initDB() {
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS projects (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      description TEXT,
-      status TEXT DEFAULT 'planning',
-      priority TEXT DEFAULT 'medium',
-      start_date TEXT,
-      end_date TEXT,
-      progress INTEGER DEFAULT 0,
-      manager TEXT,
-      created_at TIMESTAMP DEFAULT NOW(),
-      updated_at TIMESTAMP DEFAULT NOW()
-    )
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS tasks (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
-      title TEXT NOT NULL,
-      description TEXT,
-      status TEXT DEFAULT 'todo',
-      priority TEXT DEFAULT 'medium',
-      assignee TEXT,
-      due_date TEXT,
-      created_at TIMESTAMP DEFAULT NOW(),
-      updated_at TIMESTAMP DEFAULT NOW(),
-      FOREIGN KEY (project_id) REFERENCES projects(id)
-    )
-  `);
-
-  await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -55,6 +23,58 @@ async function initDB() {
       updated_at TIMESTAMP DEFAULT NOW()
     )
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS groups (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      description TEXT,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_groups (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+      PRIMARY KEY (user_id, group_id)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      status TEXT DEFAULT 'planning',
+      priority TEXT DEFAULT 'medium',
+      start_date TEXT,
+      end_date TEXT,
+      progress INTEGER DEFAULT 0,
+      manager TEXT,
+      group_id TEXT REFERENCES groups(id) ON DELETE SET NULL,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      description TEXT,
+      status TEXT DEFAULT 'todo',
+      priority TEXT DEFAULT 'medium',
+      assignee TEXT,
+      due_date TEXT,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
+  // 既存DBへのマイグレーション
+  await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS group_id TEXT REFERENCES groups(id) ON DELETE SET NULL`);
 }
 
 initDB().catch(console.error);

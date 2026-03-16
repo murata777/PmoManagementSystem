@@ -45,3 +45,13 @@ export const membersApi = {
 export const dashboardApi = {
   getStats: () => api.get('/dashboard'),
 };
+
+export const groupsApi = {
+  getAll: () => api.get('/groups'),
+  getById: (id) => api.get(`/groups/${id}`),
+  create: (data) => api.post('/groups', data),
+  update: (id, data) => api.put(`/groups/${id}`, data),
+  delete: (id) => api.delete(`/groups/${id}`),
+  addMember: (groupId, userId) => api.post(`/groups/${groupId}/members`, { user_id: userId }),
+  removeMember: (groupId, userId) => api.delete(`/groups/${groupId}/members/${userId}`),
+};

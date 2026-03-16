@@ -13,6 +13,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/projects', authMiddleware, require('./routes/projects'));
 app.use('/api/tasks', authMiddleware, require('./routes/tasks'));
 app.use('/api/members', authMiddleware, require('./routes/members'));
+app.use('/api/groups', authMiddleware, require('./routes/groups'));
 
 app.get('/api/dashboard', authMiddleware, async (req, res) => {
   try {
