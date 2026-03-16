@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { getToken, clearAuth } from './auth';
 
-const api = axios.create({ baseURL: 'http://localhost:5000/api' });
+const api = axios.create({ baseURL: '/api' });
 
 api.interceptors.request.use((config) => {
   const token = getToken();
