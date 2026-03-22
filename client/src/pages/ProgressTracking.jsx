@@ -243,7 +243,14 @@ export default function ProgressTracking() {
 
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Typography variant="h5">進捗確認（EVM）</Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => setAddOpen(true)}>
+        <Button
+          variant="contained"
+          startIcon={<AddIcon />}
+          onClick={() => {
+            setAddError('');
+            setAddOpen(true);
+          }}
+        >
           + 新規進捗記録
         </Button>
       </Box>
@@ -403,11 +410,11 @@ export default function ProgressTracking() {
                 {/* コメント */}
                 <Box>
                   <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
-                    コメント ({record.comments.length}件)
+                    コメント ({comments.length}件)
                   </Typography>
-                  {record.comments.length > 0 && (
+                  {comments.length > 0 && (
                     <List dense disablePadding sx={{ mb: 1 }}>
-                      {record.comments.map(c => (
+                      {comments.map(c => (
                         <ListItem
                           key={c.id}
                           alignItems="flex-start"
@@ -482,9 +489,19 @@ export default function ProgressTracking() {
       )}
 
       {/* 新規追加ダイアログ */}
-      <Dialog open={addOpen} onClose={() => setAddOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog
+        open={addOpen}
+        onClose={() => !addSaving && setAddOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
         <DialogTitle>新規進捗記録</DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
+          {addError ? (
+            <Alert severity="error" onClose={() => setAddError('')}>
+              {addError}
+            </Alert>
+          ) : null}
           <TextField
             label="記録日 *"
             type="date"
@@ -546,8 +563,16 @@ export default function ProgressTracking() {
           />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setAddOpen(false)}>キャンセル</Button>
-          <Button variant="contained" onClick={handleAdd} disabled={!addForm.record_date}>保存</Button>
+          <Button onClick={() => !addSaving && setAddOpen(false)} disabled={addSaving}>
+            キャンセル
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleAdd}
+            disabled={!addForm.record_date || addSaving}
+          >
+            {addSaving ? '保存中…' : '保存'}
+          </Button>
         </DialogActions>
       </Dialog>
 
