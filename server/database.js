@@ -7,6 +7,7 @@ const pool = new Pool({
   database: process.env.DB_NAME || 'pmo',
   user: process.env.DB_USER || 'pmo',
   password: process.env.DB_PASSWORD,
+  options: '-c timezone=UTC',
 });
 
 async function initDB() {
@@ -86,8 +87,81 @@ async function initDB() {
     )
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS task_comments (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      comment TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS phase_gates (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      phase_key TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'not_started',
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE(project_id, phase_key)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS phase_gate_metrics (
+      id TEXT PRIMARY KEY,
+      phase_gate_id TEXT NOT NULL REFERENCES phase_gates(id) ON DELETE CASCADE,
+      metric_key TEXT NOT NULL,
+      value NUMERIC,
+      updated_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE(phase_gate_id, metric_key)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS phase_gate_comments (
+      id TEXT PRIMARY KEY,
+      phase_gate_id TEXT NOT NULL REFERENCES phase_gates(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      comment TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS progress_records (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      record_date TEXT NOT NULL,
+      bac NUMERIC,
+      pv NUMERIC,
+      ev NUMERIC,
+      ac NUMERIC,
+      evaluation TEXT,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS progress_comments (
+      id TEXT PRIMARY KEY,
+      record_id TEXT NOT NULL REFERENCES progress_records(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      comment TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
   // 既存DBへのマイグレーション
   await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS group_id TEXT REFERENCES groups(id) ON DELETE SET NULL`);
+  await pool.query(`ALTER TABLE task_comments ADD COLUMN IF NOT EXISTS comment_type TEXT NOT NULL DEFAULT 'comment'`);
+  await pool.query(`ALTER TABLE task_comments ADD COLUMN IF NOT EXISTS old_assignee TEXT`);
+  await pool.query(`ALTER TABLE task_comments ADD COLUMN IF NOT EXISTS new_assignee TEXT`);
+  await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS process_type TEXT DEFAULT 'development'`);
 }
 
 initDB().catch(console.error);

@@ -15,6 +15,9 @@ app.use('/api/tasks', authMiddleware, require('./routes/tasks'));
 app.use('/api/members', authMiddleware, require('./routes/members'));
 app.use('/api/groups', authMiddleware, require('./routes/groups'));
 app.use('/api/projects/:projectId/fields', authMiddleware, require('./routes/customFields'));
+app.use('/api/tasks/:taskId/comments', authMiddleware, require('./routes/taskComments'));
+app.use('/api/projects/:projectId/phase-gates', authMiddleware, require('./routes/phaseGates'));
+app.use('/api/projects/:projectId/progress', authMiddleware, require('./routes/progress'));
 
 app.get('/api/dashboard', authMiddleware, async (req, res) => {
   try {

@@ -10,7 +10,7 @@ import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import GroupIcon from '@mui/icons-material/Group';
-import { projectsApi, groupsApi } from '../api';
+import { projectsApi, groupsApi, membersApi } from '../api';
 
 const STATUS_OPTIONS = [
   { value: 'planning', label: '計画中' },
@@ -26,22 +26,29 @@ const PRIORITY_OPTIONS = [
 const STATUS_COLORS = { planning: 'info', active: 'success', onhold: 'warning', completed: 'secondary' };
 const PRIORITY_COLORS = { low: 'default', medium: 'primary', high: 'error' };
 const EMPTY_FORM = { name: '', description: '', status: 'planning', priority: 'medium', start_date: '', end_date: '', progress: 0, manager: '', group_id: '' };
+const EMPTY_MEMBER_FORM = { name: '', email: '', role: '', department: '' };
 
 export default function Projects() {
   const [projects, setProjects] = useState([]);
   const [groups, setGroups] = useState([]);
+  const [members, setMembers] = useState([]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [newGroupName, setNewGroupName] = useState('');
   const [showNewGroup, setShowNewGroup] = useState(false);
   const [groupError, setGroupError] = useState('');
+  const [showNewMember, setShowNewMember] = useState(false);
+  const [newMemberForm, setNewMemberForm] = useState(EMPTY_MEMBER_FORM);
+  const [memberError, setMemberError] = useState('');
+  const [memberAdded, setMemberAdded] = useState('');
   const navigate = useNavigate();
 
   const load = () => projectsApi.getAll().then(res => setProjects(res.data));
   const loadGroups = () => groupsApi.getAll().then(res => setGroups(res.data));
+  const loadMembers = () => membersApi.getAll().then(res => setMembers(res.data));
 
-  useEffect(() => { load(); loadGroups(); }, []);
+  useEffect(() => { load(); loadGroups(); loadMembers(); }, []);
 
   const handleOpen = (project = null) => {
     setEditing(project);
@@ -49,6 +56,10 @@ export default function Projects() {
     setNewGroupName('');
     setShowNewGroup(false);
     setGroupError('');
+    setShowNewMember(false);
+    setNewMemberForm(EMPTY_MEMBER_FORM);
+    setMemberError('');
+    setMemberAdded('');
     setOpen(true);
   };
 
@@ -63,6 +74,26 @@ export default function Projects() {
       setShowNewGroup(false);
     } catch (err) {
       setGroupError(err.response?.data?.error || 'グループ作成に失敗しました');
+    }
+  };
+
+  const handleCreateMember = async () => {
+    if (!newMemberForm.name.trim() || !newMemberForm.email.trim()) return;
+    setMemberError('');
+    try {
+      const res = await membersApi.create(newMemberForm);
+      const newMemberId = res.data.id;
+      if (form.group_id && newMemberId) {
+        await groupsApi.addMember(form.group_id, newMemberId);
+        await loadGroups();
+      }
+      await loadMembers();
+      setForm(f => ({ ...f, manager: newMemberForm.name.trim() }));
+      setMemberAdded(newMemberForm.name.trim());
+      setNewMemberForm(EMPTY_MEMBER_FORM);
+      setShowNewMember(false);
+    } catch (err) {
+      setMemberError(err.response?.data?.error || 'メンバー追加に失敗しました');
     }
   };
 
@@ -85,7 +116,7 @@ export default function Projects() {
   };
 
   return (
-    <Box>
+    <Box sx={{ mx: -2 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
         <Typography variant="h5">プロジェクト一覧</Typography>
         <Button variant="contained" startIcon={<AddIcon />} onClick={() => handleOpen()}>新規作成</Button>
@@ -94,12 +125,13 @@ export default function Projects() {
       <TableContainer component={Paper}>
         <Table>
           <TableHead>
-            <TableRow>
+            <TableRow sx={{ '& th': { whiteSpace: 'nowrap' } }}>
               <TableCell>プロジェクト名</TableCell>
               <TableCell>グループ</TableCell>
               <TableCell>ステータス</TableCell>
               <TableCell>優先度</TableCell>
               <TableCell>担当PM</TableCell>
+              <TableCell>期間</TableCell>
               <TableCell>進捗</TableCell>
               <TableCell align="right">操作</TableCell>
             </TableRow>
@@ -117,6 +149,11 @@ export default function Projects() {
                 <TableCell><Chip label={STATUS_OPTIONS.find(s => s.value === p.status)?.label || p.status} color={STATUS_COLORS[p.status] || 'default'} size="small" /></TableCell>
                 <TableCell><Chip label={PRIORITY_OPTIONS.find(s => s.value === p.priority)?.label || p.priority} color={PRIORITY_COLORS[p.priority] || 'default'} size="small" /></TableCell>
                 <TableCell>{p.manager || '-'}</TableCell>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                  {p.start_date || p.end_date
+                    ? `${p.start_date || '?'} ～ ${p.end_date || '?'}`
+                    : '-'}
+                </TableCell>
                 <TableCell sx={{ minWidth: 120 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <LinearProgress variant="determinate" value={p.progress || 0} sx={{ flexGrow: 1 }} />
@@ -130,7 +167,7 @@ export default function Projects() {
               </TableRow>
             ))}
             {projects.length === 0 && (
-              <TableRow><TableCell colSpan={7} align="center">プロジェクトがありません（アクセス可能なプロジェクトがありません）</TableCell></TableRow>
+              <TableRow><TableCell colSpan={8} align="center">プロジェクトがありません（アクセス可能なプロジェクトがありません）</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
@@ -181,7 +218,44 @@ export default function Projects() {
           <TextField label="優先度" select value={form.priority} onChange={e => setForm({ ...form, priority: e.target.value })} fullWidth>
             {PRIORITY_OPTIONS.map(o => <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>)}
           </TextField>
-          <TextField label="担当PM" value={form.manager} onChange={e => setForm({ ...form, manager: e.target.value })} fullWidth />
+          {/* 担当PM選択 */}
+          <TextField label="担当PM" select value={form.manager || ''} onChange={e => setForm({ ...form, manager: e.target.value })} fullWidth>
+            <MenuItem value="">（未設定）</MenuItem>
+            <Divider />
+            {members.map(m => <MenuItem key={m.id} value={m.name}>{m.name}</MenuItem>)}
+          </TextField>
+
+          {/* 新規メンバー追加 */}
+          {memberAdded && (
+            <Alert severity="success">
+              「{memberAdded}」を追加し、担当PMに設定しました。
+              {form.group_id && ` グループにも自動追加されました。`}
+            </Alert>
+          )}
+          {!showNewMember ? (
+            <Button size="small" startIcon={<AddIcon />} onClick={() => setShowNewMember(true)} sx={{ alignSelf: 'flex-start' }}>
+              新しいメンバーを追加
+            </Button>
+          ) : (
+            <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2 }}>
+              <Typography variant="body2" gutterBottom fontWeight="bold">新規メンバー追加</Typography>
+              {memberError && <Alert severity="error" sx={{ mb: 1 }}>{memberError}</Alert>}
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  <TextField label="名前 *" value={newMemberForm.name} onChange={e => setNewMemberForm({ ...newMemberForm, name: e.target.value })} size="small" fullWidth autoFocus />
+                  <TextField label="メールアドレス *" type="email" value={newMemberForm.email} onChange={e => setNewMemberForm({ ...newMemberForm, email: e.target.value })} size="small" fullWidth helperText="招待メールを送信します" />
+                </Box>
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  <TextField label="役職" value={newMemberForm.role} onChange={e => setNewMemberForm({ ...newMemberForm, role: e.target.value })} size="small" fullWidth />
+                  <TextField label="部署" value={newMemberForm.department} onChange={e => setNewMemberForm({ ...newMemberForm, department: e.target.value })} size="small" fullWidth />
+                </Box>
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  <Button variant="contained" size="small" onClick={handleCreateMember} disabled={!newMemberForm.name.trim() || !newMemberForm.email.trim()}>追加して招待</Button>
+                  <Button size="small" onClick={() => { setShowNewMember(false); setMemberError(''); }}>キャンセル</Button>
+                </Box>
+              </Box>
+            </Box>
+          )}
           <TextField label="進捗 (%)" type="number" value={form.progress} onChange={e => setForm({ ...form, progress: Number(e.target.value) })} fullWidth inputProps={{ min: 0, max: 100 }} />
           <TextField label="開始日" type="date" value={form.start_date} onChange={e => setForm({ ...form, start_date: e.target.value })} fullWidth InputLabelProps={{ shrink: true }} />
           <TextField label="終了日" type="date" value={form.end_date} onChange={e => setForm({ ...form, end_date: e.target.value })} fullWidth InputLabelProps={{ shrink: true }} />

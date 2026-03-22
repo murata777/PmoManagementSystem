@@ -1,17 +1,25 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Fragment } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box, Typography, Button, Chip, LinearProgress, Card, CardContent,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Paper, IconButton, Dialog, DialogTitle, DialogContent, DialogActions,
-  TextField, MenuItem, Grid, Divider, Checkbox, FormControlLabel, Tooltip, Select, FormControl, InputLabel
+  TextField, MenuItem, Grid, Divider, Checkbox, FormControlLabel, Tooltip,
+  Collapse, Avatar, List, ListItem, ListItemAvatar, ListItemText,
+  Breadcrumbs, Link
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import AssignmentIcon from '@mui/icons-material/Assignment';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import SaveIcon from '@mui/icons-material/Save';
-import { projectsApi, tasksApi, customFieldsApi } from '../api';
+import SendIcon from '@mui/icons-material/Send';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import PersonIcon from '@mui/icons-material/Person';
+import { projectsApi, tasksApi, customFieldsApi, taskCommentsApi, membersApi } from '../api';
 
 const TASK_STATUS = [
   { value: 'todo', label: '未着手' },
@@ -37,7 +45,6 @@ const FIELD_TYPES = [
 
 const EMPTY_FIELD = { field_key: '', field_type: 'text', field_value: '' };
 
-// フィールドタイプに応じた値の入力コンポーネント
 function FieldValueInput({ type, value, onChange, size = 'small' }) {
   if (type === 'checkbox') {
     return (
@@ -59,6 +66,172 @@ function FieldValueInput({ type, value, onChange, size = 'small' }) {
   );
 }
 
+function TaskCommentPanel({ task, currentUser, onTaskUpdated, members }) {
+  const [comments, setComments] = useState([]);
+  const [input, setInput] = useState('');
+  const [assignee, setAssignee] = useState(task.assignee || '');
+  const [loading, setLoading] = useState(false);
+
+  const loadComments = () => {
+    taskCommentsApi.getAll(task.id).then(res => setComments(res.data));
+  };
+
+  useEffect(() => {
+    loadComments();
+    setAssignee(task.assignee || '');
+  }, [task.id, task.assignee]);
+
+  const assigneeChanged = assignee !== (task.assignee || '');
+  const canSend = input.trim() || assigneeChanged;
+
+  const handleSend = async () => {
+    if (!canSend) return;
+    setLoading(true);
+    try {
+      await taskCommentsApi.create(task.id, {
+        comment: input.trim() || undefined,
+        new_assignee: assigneeChanged ? assignee : undefined,
+        old_assignee: assigneeChanged ? (task.assignee || '') : undefined,
+      });
+      setInput('');
+      loadComments();
+      if (assigneeChanged && onTaskUpdated) onTaskUpdated();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async (commentId) => {
+    if (window.confirm('このコメントを削除しますか？')) {
+      await taskCommentsApi.delete(task.id, commentId);
+      loadComments();
+    }
+  };
+
+  const formatDate = (dt) => {
+    if (!dt) return '';
+    // スペース区切りをTに正規化し、タイムゾーン情報がなければUTC(Z)として扱う
+    let s = String(dt).replace(' ', 'T');
+    if (!/Z|[+-]\d{2}:?\d{2}$/.test(s)) s += 'Z';
+    const utcMs = new Date(s).getTime();
+    if (isNaN(utcMs)) return String(dt);
+    // UTC+9(JST)に手動変換
+    const jst = new Date(utcMs + 9 * 3600 * 1000);
+    const pad = n => String(n).padStart(2, '0');
+    return `${jst.getUTCFullYear()}/${pad(jst.getUTCMonth()+1)}/${pad(jst.getUTCDate())} ${pad(jst.getUTCHours())}:${pad(jst.getUTCMinutes())}`;
+  };
+
+  return (
+    <Box sx={{ px: 2, pb: 2, bgcolor: 'grey.50', borderTop: '1px solid', borderColor: 'divider' }}>
+      <Typography variant="subtitle2" sx={{ pt: 1.5, mb: 1, color: 'text.secondary' }}>
+        コメント・履歴 ({comments.length})
+      </Typography>
+
+      {comments.length > 0 && (
+        <List dense disablePadding sx={{ mb: 1.5 }}>
+          {comments.map(c => {
+            if (c.comment_type === 'assignee_change') {
+              return (
+                <ListItem key={c.id} disableGutters sx={{ py: 0.3 }}>
+                  <ListItemAvatar sx={{ minWidth: 32 }}>
+                    <Avatar sx={{ width: 24, height: 24, bgcolor: 'info.light' }}>
+                      <PersonIcon sx={{ fontSize: 14 }} />
+                    </Avatar>
+                  </ListItemAvatar>
+                  <ListItemText
+                    primary={
+                      <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <Typography variant="caption" fontWeight="bold">{c.user_name}</Typography>
+                        <Typography variant="caption" color="text.secondary">が担当者を変更:</Typography>
+                        {c.old_assignee
+                          ? <Chip label={c.old_assignee} size="small" variant="outlined" sx={{ height: 18, fontSize: 11 }} />
+                          : <Typography variant="caption" color="text.secondary">（未設定）</Typography>
+                        }
+                        <Typography variant="caption" color="text.secondary">→</Typography>
+                        {c.new_assignee
+                          ? <Chip label={c.new_assignee} size="small" color="primary" sx={{ height: 18, fontSize: 11 }} />
+                          : <Typography variant="caption" color="text.secondary">（未設定）</Typography>
+                        }
+                        <Typography variant="caption" color="text.secondary" sx={{ ml: 0.5 }}>{formatDate(c.created_at)}</Typography>
+                      </Box>
+                    }
+                  />
+                </ListItem>
+              );
+            }
+            return (
+              <ListItem key={c.id} alignItems="flex-start" disableGutters
+                secondaryAction={
+                  currentUser && c.user_id === currentUser.id &&
+                  <IconButton size="small" edge="end" onClick={() => handleDelete(c.id)}>
+                    <DeleteIcon fontSize="small" sx={{ color: 'error.light' }} />
+                  </IconButton>
+                }
+                sx={{ pr: currentUser && c.user_id === currentUser.id ? 4 : 0 }}
+              >
+                <ListItemAvatar sx={{ minWidth: 36 }}>
+                  <Avatar sx={{ width: 28, height: 28, fontSize: 12 }}>{c.user_name?.charAt(0)}</Avatar>
+                </ListItemAvatar>
+                <ListItemText
+                  primary={
+                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'baseline' }}>
+                      <Typography variant="caption" fontWeight="bold">{c.user_name}</Typography>
+                      <Typography variant="caption" color="text.secondary">{formatDate(c.created_at)}</Typography>
+                    </Box>
+                  }
+                  secondary={<Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{c.comment}</Typography>}
+                />
+              </ListItem>
+            );
+          })}
+        </List>
+      )}
+
+      {/* 入力エリア */}
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <PersonIcon fontSize="small" color="action" />
+          <Typography variant="caption" color="text.secondary" sx={{ minWidth: 50 }}>担当者:</Typography>
+          <TextField
+            select
+            size="small"
+            value={assignee}
+            onChange={e => setAssignee(e.target.value)}
+            sx={{ width: 200, ...(assigneeChanged ? { '& fieldset': { borderColor: 'warning.main' } } : {}) }}
+          >
+            <MenuItem value="">（未設定）</MenuItem>
+            {(members || []).map(m => (
+              <MenuItem key={m.id} value={m.name}>{m.name}</MenuItem>
+            ))}
+          </TextField>
+          {assigneeChanged && (
+            <Typography variant="caption" color="warning.dark">変更あり</Typography>
+          )}
+        </Box>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <TextField
+            size="small"
+            fullWidth
+            placeholder="コメントを入力... (Shift+Enterで改行)"
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+            multiline
+            maxRows={4}
+          />
+          <Tooltip title={assigneeChanged && !input.trim() ? '担当者変更を保存' : 'コメントを投稿'}>
+            <span>
+              <IconButton color="primary" onClick={handleSend} disabled={loading || !canSend}>
+                <SendIcon />
+              </IconButton>
+            </span>
+          </Tooltip>
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
 export default function ProjectDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -68,11 +241,19 @@ export default function ProjectDetail() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY_TASK);
-  // カスタムフィールド用
   const [fieldDialog, setFieldDialog] = useState(false);
   const [editingField, setEditingField] = useState(null);
   const [fieldForm, setFieldForm] = useState(EMPTY_FIELD);
-  const [inlineEditing, setInlineEditing] = useState({}); // fieldId -> value
+  const [inlineEditing, setInlineEditing] = useState({});
+  const [expandedTask, setExpandedTask] = useState(null); // taskId or null
+  const [currentUser, setCurrentUser] = useState(null);
+  const [members, setMembers] = useState([]);
+
+  useEffect(() => {
+    const u = localStorage.getItem('user');
+    if (u) try { setCurrentUser(JSON.parse(u)); } catch {}
+    membersApi.getAll().then(res => setMembers(res.data));
+  }, []);
 
   const load = () => {
     projectsApi.getById(id).then(res => {
@@ -84,7 +265,6 @@ export default function ProjectDetail() {
   };
   useEffect(() => { load(); }, [id]);
 
-  // タスク操作
   const handleOpen = (task = null) => { setEditing(task); setForm(task ? { ...task } : EMPTY_TASK); setOpen(true); };
   const handleSave = async () => {
     editing ? await tasksApi.update(editing.id, form) : await tasksApi.create({ ...form, project_id: id });
@@ -94,7 +274,6 @@ export default function ProjectDetail() {
     if (window.confirm('このタスクを削除しますか？')) { await tasksApi.delete(taskId); load(); }
   };
 
-  // カスタムフィールド操作
   const handleOpenField = (field = null) => {
     setEditingField(field);
     setFieldForm(field ? { field_key: field.field_key, field_type: field.field_type, field_value: field.field_value || '' } : EMPTY_FIELD);
@@ -110,7 +289,6 @@ export default function ProjectDetail() {
     if (window.confirm('この項目を削除しますか？')) { await customFieldsApi.delete(id, fieldId); load(); }
   };
 
-  // インライン値編集（値のみ即時保存）
   const handleInlineChange = (field, value) => {
     setInlineEditing(prev => ({ ...prev, [field.id]: value }));
   };
@@ -121,11 +299,34 @@ export default function ProjectDetail() {
     load();
   };
 
+  const toggleComments = (taskId) => {
+    setExpandedTask(prev => prev === taskId ? null : taskId);
+  };
+
   if (!project) return null;
 
   return (
     <Box>
-      <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/projects')} sx={{ mb: 2 }}>一覧に戻る</Button>
+      <Breadcrumbs sx={{ mb: 2 }}>
+        <Link
+          component="button"
+          underline="hover"
+          color="inherit"
+          onClick={() => navigate('/projects')}
+          sx={{ display: 'flex', alignItems: 'center', gap: 0.5, cursor: 'pointer' }}
+        >
+          <ArrowBackIcon fontSize="small" />
+          プロジェクト一覧
+        </Link>
+        <Typography color="text.primary">{project.name}</Typography>
+      </Breadcrumbs>
+
+      <Button variant="outlined" startIcon={<AssignmentIcon />} onClick={() => navigate(`/projects/${id}/phase-gates`)} sx={{ mb: 2, ml: 1 }}>
+        フェーズゲート
+      </Button>
+      <Button variant="outlined" startIcon={<TrendingUpIcon />} onClick={() => navigate(`/projects/${id}/progress`)} sx={{ mb: 2, ml: 1 }}>
+        進捗確認（EVM）
+      </Button>
 
       {/* プロジェクト概要 */}
       <Card sx={{ mb: 3 }}>
@@ -233,20 +434,41 @@ export default function ProjectDetail() {
           </TableHead>
           <TableBody>
             {tasks.map(t => (
-              <TableRow key={t.id} hover>
-                <TableCell>
-                  <Typography fontWeight="bold">{t.title}</Typography>
-                  {t.description && <Typography variant="caption" color="text.secondary">{t.description}</Typography>}
-                </TableCell>
-                <TableCell><Chip label={TASK_STATUS.find(s => s.value === t.status)?.label || t.status} color={TASK_STATUS_COLORS[t.status] || 'default'} size="small" /></TableCell>
-                <TableCell><Chip label={PRIORITY_OPTIONS.find(s => s.value === t.priority)?.label || t.priority} color={PRIORITY_COLORS[t.priority] || 'default'} size="small" /></TableCell>
-                <TableCell>{t.assignee || '-'}</TableCell>
-                <TableCell>{t.due_date || '-'}</TableCell>
-                <TableCell align="right">
-                  <IconButton size="small" onClick={() => handleOpen(t)}><EditIcon /></IconButton>
-                  <IconButton size="small" color="error" onClick={() => handleDeleteTask(t.id)}><DeleteIcon /></IconButton>
-                </TableCell>
-              </TableRow>
+              <Fragment key={t.id}>
+                <TableRow hover
+                  sx={{ cursor: 'pointer', '& td': { borderBottom: expandedTask === t.id ? 0 : undefined } }}
+                  onClick={() => toggleComments(t.id)}
+                >
+                  <TableCell>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      {expandedTask === t.id ? <ExpandLessIcon fontSize="small" color="action" /> : <ExpandMoreIcon fontSize="small" color="action" />}
+                      <Box>
+                        <Typography fontWeight="bold">{t.title}</Typography>
+                        {t.description && <Typography variant="caption" color="text.secondary">{t.description}</Typography>}
+                      </Box>
+                    </Box>
+                  </TableCell>
+                  <TableCell onClick={e => e.stopPropagation()}>
+                    <Chip label={TASK_STATUS.find(s => s.value === t.status)?.label || t.status} color={TASK_STATUS_COLORS[t.status] || 'default'} size="small" />
+                  </TableCell>
+                  <TableCell onClick={e => e.stopPropagation()}>
+                    <Chip label={PRIORITY_OPTIONS.find(s => s.value === t.priority)?.label || t.priority} color={PRIORITY_COLORS[t.priority] || 'default'} size="small" />
+                  </TableCell>
+                  <TableCell onClick={e => e.stopPropagation()}>{t.assignee || '-'}</TableCell>
+                  <TableCell onClick={e => e.stopPropagation()}>{t.due_date || '-'}</TableCell>
+                  <TableCell align="right" onClick={e => e.stopPropagation()}>
+                    <IconButton size="small" onClick={() => handleOpen(t)}><EditIcon /></IconButton>
+                    <IconButton size="small" color="error" onClick={() => handleDeleteTask(t.id)}><DeleteIcon /></IconButton>
+                  </TableCell>
+                </TableRow>
+                {expandedTask === t.id && (
+                  <TableRow>
+                    <TableCell colSpan={6} sx={{ p: 0 }}>
+                      <TaskCommentPanel task={t} currentUser={currentUser} onTaskUpdated={load} members={members} />
+                    </TableCell>
+                  </TableRow>
+                )}
+              </Fragment>
             ))}
             {tasks.length === 0 && (
               <TableRow><TableCell colSpan={6} align="center">タスクがありません</TableCell></TableRow>
@@ -267,7 +489,10 @@ export default function ProjectDetail() {
           <TextField label="優先度" select value={form.priority} onChange={e => setForm({ ...form, priority: e.target.value })} fullWidth>
             {PRIORITY_OPTIONS.map(o => <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>)}
           </TextField>
-          <TextField label="担当者" value={form.assignee} onChange={e => setForm({ ...form, assignee: e.target.value })} fullWidth />
+          <TextField label="担当者" select value={form.assignee || ''} onChange={e => setForm({ ...form, assignee: e.target.value })} fullWidth>
+            <MenuItem value="">（未設定）</MenuItem>
+            {members.map(m => <MenuItem key={m.id} value={m.name}>{m.name}</MenuItem>)}
+          </TextField>
           <TextField label="期日" type="date" value={form.due_date} onChange={e => setForm({ ...form, due_date: e.target.value })} fullWidth InputLabelProps={{ shrink: true }} />
         </DialogContent>
         <DialogActions>
@@ -276,7 +501,7 @@ export default function ProjectDetail() {
         </DialogActions>
       </Dialog>
 
-      {/* カスタムフィールドダイアログ（項目定義） */}
+      {/* カスタムフィールドダイアログ */}
       <Dialog open={fieldDialog} onClose={() => setFieldDialog(false)} maxWidth="sm" fullWidth>
         <DialogTitle>{editingField ? 'カスタム項目を編集' : 'カスタム項目を追加'}</DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>

@@ -53,6 +53,29 @@ export const customFieldsApi = {
   delete: (projectId, fieldId) => api.delete(`/projects/${projectId}/fields/${fieldId}`),
 };
 
+export const taskCommentsApi = {
+  getAll: (taskId) => api.get(`/tasks/${taskId}/comments`),
+  create: (taskId, data) => api.post(`/tasks/${taskId}/comments`, data),
+  delete: (taskId, commentId) => api.delete(`/tasks/${taskId}/comments/${commentId}`),
+};
+
+export const phaseGatesApi = {
+  getAll: (projectId) => api.get(`/projects/${projectId}/phase-gates`),
+  updateStatus: (projectId, phaseKey, status) => api.put(`/projects/${projectId}/phase-gates/${phaseKey}`, { status }),
+  updateMetrics: (projectId, phaseKey, metrics) => api.put(`/projects/${projectId}/phase-gates/${phaseKey}/metrics`, { metrics }),
+  addComment: (projectId, phaseKey, comment) => api.post(`/projects/${projectId}/phase-gates/${phaseKey}/comments`, { comment }),
+  deleteComment: (projectId, phaseKey, commentId) => api.delete(`/projects/${projectId}/phase-gates/${phaseKey}/comments/${commentId}`),
+};
+
+export const progressApi = {
+  getAll: (projectId) => api.get(`/projects/${projectId}/progress`),
+  create: (projectId, data) => api.post(`/projects/${projectId}/progress`, data),
+  update: (projectId, recordId, data) => api.put(`/projects/${projectId}/progress/${recordId}`, data),
+  delete: (projectId, recordId) => api.delete(`/projects/${projectId}/progress/${recordId}`),
+  addComment: (projectId, recordId, comment) => api.post(`/projects/${projectId}/progress/${recordId}/comments`, { comment }),
+  deleteComment: (projectId, recordId, commentId) => api.delete(`/projects/${projectId}/progress/${recordId}/comments/${commentId}`),
+};
+
 export const groupsApi = {
   getAll: () => api.get('/groups'),
   getById: (id) => api.get(`/groups/${id}`),

@@ -18,6 +18,8 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import ChangePassword from './pages/ChangePassword';
 import ForgotPassword from './pages/ForgotPassword';
+import PhaseGate from './pages/PhaseGate';
+import ProgressTracking from './pages/ProgressTracking';
 import { getStoredUser, clearAuth } from './auth';
 
 const DRAWER_WIDTH = 220;
@@ -31,6 +33,8 @@ const navItems = [
 
 function NavList() {
   const location = useLocation();
+  const isSelected = (path) =>
+    path === '/' ? location.pathname === '/' : location.pathname.startsWith(path);
   return (
     <List>
       {navItems.map((item) => (
@@ -38,7 +42,7 @@ function NavList() {
           key={item.path}
           component={Link}
           to={item.path}
-          selected={location.pathname === item.path}
+          selected={isSelected(item.path)}
           sx={{ color: 'inherit', textDecoration: 'none', '&.Mui-selected': { bgcolor: 'primary.light', color: 'white' } }}
         >
           <ListItemIcon sx={{ color: 'inherit' }}>{item.icon}</ListItemIcon>
@@ -91,6 +95,8 @@ function AppLayout({ user, onLogout }) {
           <Route path="/" element={<Dashboard />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/:id" element={<ProjectDetail />} />
+          <Route path="/projects/:id/phase-gates" element={<PhaseGate />} />
+          <Route path="/projects/:id/progress" element={<ProgressTracking />} />
           <Route path="/members" element={<Members />} />
           <Route path="/groups" element={<Groups />} />
           <Route path="/change-password" element={<ChangePassword />} />
