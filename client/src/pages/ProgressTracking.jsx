@@ -30,6 +30,16 @@ const formatDate = (dt) => {
   return `${jst.getUTCFullYear()}/${pad(jst.getUTCMonth()+1)}/${pad(jst.getUTCDate())} ${pad(jst.getUTCHours())}:${pad(jst.getUTCMinutes())}`;
 };
 
+/** タスク追加APIの失敗理由（404 で JSON が無いときは接続・プロキシを示唆） */
+const formatTaskAddError = (e) => {
+  const d = e.response?.data;
+  if (d && typeof d === 'object' && typeof d.error === 'string' && d.error) return d.error;
+  if (e.response?.status === 404) {
+    return 'APIが見つかりません。バックエンド（npm run server、既定ポート5000）が起動しているか、Vite の proxy / preview.proxy を確認してください。';
+  }
+  return e.message || '不明なエラー';
+};
+
 const calcEVM = (bac, pv, ev, ac) => {
   const n = (v) => (v !== null && v !== undefined && v !== '' ? Number(v) : null);
   const b = n(bac), p = n(pv), e = n(ev), a = n(ac);
@@ -396,8 +406,7 @@ export default function ProgressTracking() {
           taskLinkId: tid,
         });
       } else {
-        const err = e.response?.data?.error || e.message || '不明なエラー';
-        setSnack({ message: `タスクの追加に失敗しました: ${err}`, severity: 'error', taskLinkId: null });
+        setSnack({ message: `タスクの追加に失敗しました: ${formatTaskAddError(e)}`, severity: 'error', taskLinkId: null });
       }
     } finally {
       setTaskAddInFlight((cur) => (cur === k ? null : cur));
@@ -435,8 +444,7 @@ export default function ProgressTracking() {
           taskLinkId: tid,
         });
       } else {
-        const err = e.response?.data?.error || e.message || '不明なエラー';
-        setSnack({ message: `タスクの追加に失敗しました: ${err}`, severity: 'error', taskLinkId: null });
+        setSnack({ message: `タスクの追加に失敗しました: ${formatTaskAddError(e)}`, severity: 'error', taskLinkId: null });
       }
     } finally {
       setTaskAddInFlight((cur) => (cur === k ? null : cur));
@@ -469,8 +477,7 @@ export default function ProgressTracking() {
         taskLinkId: res.data.id,
       });
     } catch (e) {
-      const err = e.response?.data?.error || e.message || '不明なエラー';
-      setSnack({ message: `タスクの追加に失敗しました: ${err}`, severity: 'error', taskLinkId: null });
+      setSnack({ message: `タスクの追加に失敗しました: ${formatTaskAddError(e)}`, severity: 'error', taskLinkId: null });
     } finally {
       setTaskAddInFlight((cur) => (cur === k ? null : cur));
     }

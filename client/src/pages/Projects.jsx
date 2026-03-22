@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Box, Typography, Button, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, Paper, Chip, IconButton, Dialog, DialogTitle,
-  DialogContent, DialogActions, TextField, MenuItem, LinearProgress,
+  DialogContent, DialogActions, TextField, MenuItem,
   Divider, Alert
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
@@ -11,6 +11,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import GroupIcon from '@mui/icons-material/Group';
 import { projectsApi, groupsApi, membersApi } from '../api';
+import { fmtEvmIndex, evmIndexChipColor } from '../utils/evm';
 
 const STATUS_OPTIONS = [
   { value: 'planning', label: '計画中' },
@@ -25,7 +26,18 @@ const PRIORITY_OPTIONS = [
 ];
 const STATUS_COLORS = { planning: 'info', active: 'success', onhold: 'warning', completed: 'secondary' };
 const PRIORITY_COLORS = { low: 'default', medium: 'primary', high: 'error' };
-const EMPTY_FORM = { name: '', description: '', status: 'planning', priority: 'medium', start_date: '', end_date: '', progress: 0, manager: '', group_id: '' };
+const EMPTY_FORM = { name: '', description: '', status: 'planning', priority: 'medium', start_date: '', end_date: '', manager: '', group_id: '' };
+
+const projectToForm = (p) => ({
+  name: p.name,
+  description: p.description || '',
+  status: p.status,
+  priority: p.priority,
+  start_date: p.start_date || '',
+  end_date: p.end_date || '',
+  manager: p.manager || '',
+  group_id: p.group_id || '',
+});
 const EMPTY_MEMBER_FORM = { name: '', email: '', role: '', department: '' };
 
 export default function Projects() {
@@ -52,7 +64,7 @@ export default function Projects() {
 
   const handleOpen = (project = null) => {
     setEditing(project);
-    setForm(project ? { ...project, group_id: project.group_id || '' } : EMPTY_FORM);
+    setForm(project ? projectToForm(project) : EMPTY_FORM);
     setNewGroupName('');
     setShowNewGroup(false);
     setGroupError('');
@@ -98,7 +110,16 @@ export default function Projects() {
   };
 
   const handleSave = async () => {
-    const data = { ...form, group_id: form.group_id || null };
+    const data = {
+      name: form.name,
+      description: form.description,
+      status: form.status,
+      priority: form.priority,
+      start_date: form.start_date || null,
+      end_date: form.end_date || null,
+      manager: form.manager || null,
+      group_id: form.group_id || null,
+    };
     if (editing) {
       await projectsApi.update(editing.id, data);
     } else {
@@ -132,7 +153,7 @@ export default function Projects() {
               <TableCell>優先度</TableCell>
               <TableCell>担当PM</TableCell>
               <TableCell>期間</TableCell>
-              <TableCell>進捗</TableCell>
+              <TableCell>EVM（最新）</TableCell>
               <TableCell align="right">操作</TableCell>
             </TableRow>
           </TableHead>
@@ -154,10 +175,31 @@ export default function Projects() {
                     ? `${p.start_date || '?'} ～ ${p.end_date || '?'}`
                     : '-'}
                 </TableCell>
-                <TableCell sx={{ minWidth: 120 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <LinearProgress variant="determinate" value={p.progress || 0} sx={{ flexGrow: 1 }} />
-                    <Typography variant="body2">{p.progress || 0}%</Typography>
+                <TableCell sx={{ minWidth: 160 }}>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-start' }}>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                      <Chip
+                        label={`SPI ${fmtEvmIndex(p.evm_spi)}`}
+                        color={evmIndexChipColor(p.evm_spi)}
+                        size="small"
+                        variant={p.evm_spi == null ? 'outlined' : 'filled'}
+                      />
+                      <Chip
+                        label={`CPI ${fmtEvmIndex(p.evm_cpi)}`}
+                        color={evmIndexChipColor(p.evm_cpi)}
+                        size="small"
+                        variant={p.evm_cpi == null ? 'outlined' : 'filled'}
+                      />
+                    </Box>
+                    {p.evm_as_of ? (
+                      <Typography variant="caption" color="text.secondary">
+                        基準日 {p.evm_as_of}
+                      </Typography>
+                    ) : (
+                      <Typography variant="caption" color="text.secondary">
+                        進捗記録なし
+                      </Typography>
+                    )}
                   </Box>
                 </TableCell>
                 <TableCell align="right" onClick={e => e.stopPropagation()}>
@@ -256,7 +298,6 @@ export default function Projects() {
               </Box>
             </Box>
           )}
-          <TextField label="進捗 (%)" type="number" value={form.progress} onChange={e => setForm({ ...form, progress: Number(e.target.value) })} fullWidth inputProps={{ min: 0, max: 100 }} />
           <TextField label="開始日" type="date" value={form.start_date} onChange={e => setForm({ ...form, start_date: e.target.value })} fullWidth InputLabelProps={{ shrink: true }} />
           <TextField label="終了日" type="date" value={form.end_date} onChange={e => setForm({ ...form, end_date: e.target.value })} fullWidth InputLabelProps={{ shrink: true }} />
         </DialogContent>

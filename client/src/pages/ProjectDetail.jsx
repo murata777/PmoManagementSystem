@@ -1,7 +1,8 @@
 import { useEffect, useState, Fragment } from 'react';
 import { useParams, useNavigate, useLocation, Link as RouterLink } from 'react-router-dom';
+import { fmtEvmIndex, evmIndexChipColor } from '../utils/evm';
 import {
-  Box, Typography, Button, Chip, LinearProgress, Card, CardContent,
+  Box, Typography, Button, Chip, Card, CardContent,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Paper, IconButton, Dialog, DialogTitle, DialogContent, DialogActions,
   TextField, MenuItem, Grid, Divider, Checkbox, FormControlLabel, Tooltip,
@@ -357,8 +358,37 @@ export default function ProjectDetail() {
             </Grid>
           </Grid>
           <Box sx={{ mt: 2 }}>
-            <Typography variant="body2" gutterBottom>進捗: {project.progress || 0}%</Typography>
-            <LinearProgress variant="determinate" value={project.progress || 0} sx={{ height: 10, borderRadius: 5 }} />
+            <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+              進捗状況（進捗確認 EVM の最新記録）
+            </Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+              <Chip
+                label={`SPI ${fmtEvmIndex(project.evm_spi)}`}
+                color={evmIndexChipColor(project.evm_spi)}
+                size="small"
+                variant={project.evm_spi == null ? 'outlined' : 'filled'}
+              />
+              <Chip
+                label={`CPI ${fmtEvmIndex(project.evm_cpi)}`}
+                color={evmIndexChipColor(project.evm_cpi)}
+                size="small"
+                variant={project.evm_cpi == null ? 'outlined' : 'filled'}
+              />
+              {project.evm_as_of && (
+                <Typography variant="body2" color="text.secondary">
+                  基準日 {project.evm_as_of}
+                </Typography>
+              )}
+            </Box>
+            {!project.evm_as_of && (
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
+                まだ進捗記録がありません。{' '}
+                <Link component={RouterLink} to={`/projects/${id}/progress`} color="inherit" sx={{ fontWeight: 600 }}>
+                  進捗確認（EVM）
+                </Link>
+                から入力してください。
+              </Typography>
+            )}
           </Box>
           {project.manager && <Typography variant="body2" sx={{ mt: 1 }}>担当PM: {project.manager}</Typography>}
           {project.start_date && project.end_date && (
