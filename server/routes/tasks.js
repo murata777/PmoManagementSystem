@@ -3,6 +3,37 @@ const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
 
+async function resolveProgressSource(projectId, progressRecordId, progressCommentId) {
+  let recordId = progressRecordId || null;
+  let commentId = progressCommentId || null;
+  if (commentId) {
+    const { rows } = await pool.query(
+      `SELECT pc.record_id, pr.project_id
+       FROM progress_comments pc
+       JOIN progress_records pr ON pc.record_id = pr.id
+       WHERE pc.id = $1`,
+      [commentId]
+    );
+    if (!rows[0] || rows[0].project_id !== projectId) {
+      return { error: '進捗コメントがこのプロジェクトに属しません' };
+    }
+    if (recordId && recordId !== rows[0].record_id) {
+      return { error: '進捗記録とコメントの組み合わせが不正です' };
+    }
+    recordId = rows[0].record_id;
+    return { recordId, commentId };
+  }
+  if (recordId) {
+    const { rows } = await pool.query(
+      `SELECT id FROM progress_records WHERE id = $1 AND project_id = $2`,
+      [recordId, projectId]
+    );
+    if (!rows[0]) return { error: '進捗記録がこのプロジェクトに属しません' };
+    return { recordId, commentId: null };
+  }
+  return { recordId: null, commentId: null };
+}
+
 router.get('/', async (req, res) => {
   try {
     const { project_id } = req.query;
@@ -16,14 +47,43 @@ router.get('/', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  const { project_id, title, description, status, priority, assignee, due_date } = req.body;
+  const {
+    project_id,
+    title,
+    description,
+    status,
+    priority,
+    assignee,
+    due_date,
+    progress_record_id,
+    progress_comment_id,
+  } = req.body;
   if (!project_id || !title) return res.status(400).json({ error: 'project_id and title are required' });
   const id = uuidv4();
   try {
+    let prId = null;
+    let pcId = null;
+    if (progress_record_id || progress_comment_id) {
+      const resolved = await resolveProgressSource(project_id, progress_record_id, progress_comment_id);
+      if (resolved.error) return res.status(400).json({ error: resolved.error });
+      prId = resolved.recordId;
+      pcId = resolved.commentId;
+    }
     const { rows } = await pool.query(
-      `INSERT INTO tasks (id, project_id, title, description, status, priority, assignee, due_date)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [id, project_id, title, description, status || 'todo', priority || 'medium', assignee, due_date]
+      `INSERT INTO tasks (id, project_id, title, description, status, priority, assignee, due_date, progress_record_id, progress_comment_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [
+        id,
+        project_id,
+        title,
+        description,
+        status || 'todo',
+        priority || 'medium',
+        assignee,
+        due_date,
+        prId,
+        pcId,
+      ]
     );
     res.status(201).json(rows[0]);
   } catch (err) {

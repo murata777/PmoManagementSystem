@@ -1,5 +1,5 @@
 import { useEffect, useState, Fragment } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link as RouterLink } from 'react-router-dom';
 import {
   Box, Typography, Button, Chip, LinearProgress, Card, CardContent,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
@@ -235,6 +235,7 @@ function TaskCommentPanel({ task, currentUser, onTaskUpdated, members }) {
 export default function ProjectDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [project, setProject] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [fields, setFields] = useState([]);
@@ -264,6 +265,18 @@ export default function ProjectDetail() {
     customFieldsApi.getAll(id).then(res => setFields(res.data));
   };
   useEffect(() => { load(); }, [id]);
+
+  useEffect(() => {
+    const hash = location.hash || '';
+    if (!hash.startsWith('#task-') || !tasks.length) return undefined;
+    const taskId = decodeURIComponent(hash.slice('#task-'.length));
+    if (!tasks.some((t) => t.id === taskId)) return undefined;
+    setExpandedTask(taskId);
+    const raf = requestAnimationFrame(() => {
+      document.getElementById(`task-row-${taskId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [location.hash, tasks]);
 
   const handleOpen = (task = null) => { setEditing(task); setForm(task ? { ...task } : EMPTY_TASK); setOpen(true); };
   const handleSave = async () => {
@@ -435,7 +448,9 @@ export default function ProjectDetail() {
           <TableBody>
             {tasks.map(t => (
               <Fragment key={t.id}>
-                <TableRow hover
+                <TableRow
+                  id={`task-row-${t.id}`}
+                  hover
                   sx={{ cursor: 'pointer', '& td': { borderBottom: expandedTask === t.id ? 0 : undefined } }}
                   onClick={() => toggleComments(t.id)}
                 >
@@ -444,7 +459,22 @@ export default function ProjectDetail() {
                       {expandedTask === t.id ? <ExpandLessIcon fontSize="small" color="action" /> : <ExpandMoreIcon fontSize="small" color="action" />}
                       <Box>
                         <Typography fontWeight="bold">{t.title}</Typography>
-                        {t.description && <Typography variant="caption" color="text.secondary">{t.description}</Typography>}
+                        {t.description && <Typography variant="caption" color="text.secondary" display="block">{t.description}</Typography>}
+                        {(t.progress_comment_id || t.progress_record_id) && (
+                          <Link
+                            component={RouterLink}
+                            to={`/projects/${id}/progress#${
+                              t.progress_comment_id
+                                ? `evm-comment-${t.progress_comment_id}`
+                                : `evm-eval-${t.progress_record_id}`
+                            }`}
+                            variant="caption"
+                            sx={{ display: 'inline-block', mt: 0.25 }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            進捗確認（EVM）のコメント／記録へ
+                          </Link>
+                        )}
                       </Box>
                     </Box>
                   </TableCell>

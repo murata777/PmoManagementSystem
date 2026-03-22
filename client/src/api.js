@@ -74,6 +74,10 @@ export const progressApi = {
   delete: (projectId, recordId) => api.delete(`/projects/${projectId}/progress/${recordId}`),
   addComment: (projectId, recordId, comment) => api.post(`/projects/${projectId}/progress/${recordId}/comments`, { comment }),
   deleteComment: (projectId, recordId, commentId) => api.delete(`/projects/${projectId}/progress/${recordId}/comments/${commentId}`),
+  addCommentAsTask: (projectId, recordId, commentId) =>
+    api.post(`/projects/${projectId}/progress/${recordId}/comments/${commentId}/add-task`),
+  addEvaluationAsTask: (projectId, recordId, body) =>
+    api.post(`/projects/${projectId}/progress/${recordId}/add-evaluation-task`, body || {}),
 };
 
 export const groupsApi = {

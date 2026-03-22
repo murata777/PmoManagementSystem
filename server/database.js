@@ -162,6 +162,10 @@ async function initDB() {
   await pool.query(`ALTER TABLE task_comments ADD COLUMN IF NOT EXISTS old_assignee TEXT`);
   await pool.query(`ALTER TABLE task_comments ADD COLUMN IF NOT EXISTS new_assignee TEXT`);
   await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS process_type TEXT DEFAULT 'development'`);
+  await pool.query(`ALTER TABLE progress_comments ADD COLUMN IF NOT EXISTS linked_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL`);
+  await pool.query(`ALTER TABLE progress_records ADD COLUMN IF NOT EXISTS evaluation_linked_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL`);
+  await pool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS progress_record_id TEXT REFERENCES progress_records(id) ON DELETE SET NULL`);
+  await pool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS progress_comment_id TEXT REFERENCES progress_comments(id) ON DELETE SET NULL`);
 }
 
 initDB().catch(console.error);

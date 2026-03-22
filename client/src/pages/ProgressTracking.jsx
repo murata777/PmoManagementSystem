@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link as RouterLink } from 'react-router-dom';
 import {
   Box, Typography, Button, Card, CardContent, TextField, IconButton,
   Dialog, DialogTitle, DialogContent, DialogActions, Divider, Chip,
   Avatar, List, ListItem, ListItemAvatar, ListItemText, Tooltip,
-  Alert, Snackbar, Breadcrumbs, Link, Grid
+  Alert, Snackbar, Breadcrumbs, Link, Grid, useTheme
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import AddIcon from '@mui/icons-material/Add';
@@ -16,7 +16,8 @@ import SendIcon from '@mui/icons-material/Send';
 import PlaylistAddIcon from '@mui/icons-material/PlaylistAdd';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip as ReTooltip, Legend, ReferenceLine, ResponsiveContainer
+  Tooltip as ReTooltip, Legend, ReferenceLine, ResponsiveContainer,
+  BarChart, Bar, Cell, LabelList
 } from 'recharts';
 import { projectsApi, progressApi, tasksApi } from '../api';
 
@@ -52,9 +53,169 @@ const varColor = (v) => v === null ? 'default' : v >= 0 ? 'success' : 'error';
 const fmt = (v) => v === null || v === undefined ? '-' : Number(v).toLocaleString();
 const fmtIdx = (v) => v === null || v === undefined ? '-' : Number(v).toFixed(2);
 
+/** EVM指標の意味を、計算結果に応じて短文で要約する */
+function summarizeEVM(evm) {
+  const { sv, cv, spi, cpi, eac, etc, vac } = evm;
+  const spiF = spi !== null && Number.isFinite(spi) ? spi : null;
+  const cpiF = cpi !== null && Number.isFinite(cpi) ? cpi : null;
+  const hasSchedule = spiF !== null && sv !== null;
+  const hasCost = cpiF !== null && cv !== null;
+  const hasForecast =
+    eac !== null && Number.isFinite(eac) &&
+    etc !== null && Number.isFinite(etc) &&
+    vac !== null && Number.isFinite(vac);
+
+  if (!hasSchedule && !hasCost && !hasForecast) {
+    return 'スケジュール指標（SPI 等）には PV・EV、コスト指標（CPI 等）には EV・AC が必要です。AC は月次などで把握できるタイミングでのみ入力すればよく、未入力でも問題ありません。';
+  }
+
+  const lines = [];
+
+  if (hasSchedule) {
+    if (spiF >= 1) {
+      lines.push(`スケジュールは計画より進んでいます（SPI ${spiF.toFixed(2)}）。計画価値に対して出来高が上回っており、SV は ${fmt(sv)} です。`);
+    } else if (spiF >= 0.9) {
+      lines.push(`スケジュールはやや遅れ気味です（SPI ${spiF.toFixed(2)}）。SV は ${fmt(sv)} で、計画に対して出来高がやや不足しています。`);
+    } else {
+      lines.push(`スケジュールに遅れがあります（SPI ${spiF.toFixed(2)}）。SV は ${fmt(sv)} で、計画どおりに進めるにはペースの改善が必要です。`);
+    }
+  } else if (spiF !== null) {
+    lines.push(`SPI は ${spiF.toFixed(2)} です（SV は PV・EV 双方が必要なため未表示の場合があります）。`);
+  }
+
+  if (hasCost) {
+    if (cpiF >= 1) {
+      lines.push(`コスト効率は良好です（CPI ${cpiF.toFixed(2)}）。投入したコストに対して出来高が見合っており、CV は ${fmt(cv)} です。`);
+    } else if (cpiF >= 0.9) {
+      lines.push(`コストはやや超過傾向です（CPI ${cpiF.toFixed(2)}）。CV は ${fmt(cv)} で、予算内収束に注意が必要です。`);
+    } else {
+      lines.push(`コスト超過が目立ちます（CPI ${cpiF.toFixed(2)}）。CV は ${fmt(cv)} で、原価・スコープ・見積の見直しを検討してください。`);
+    }
+  } else if (cpiF !== null) {
+    lines.push(`CPI は ${cpiF.toFixed(2)} です。`);
+  }
+
+  if (hasForecast) {
+    lines.push(
+      `完成時総コストの見込み（EAC）は ${fmt(eac)}、残作業に必要なコスト見込み（ETC）は ${fmt(etc)} です。完成時予算（BAC）との差（VAC）が ${fmt(vac)} で、${vac >= 0 ? '見込み総コストは BAC を下回る見通しです。' : '見込み総コストが BAC を上回る見通しです。'}`
+    );
+  }
+
+  return lines.join('\n');
+}
+
+/** SPI・CPI を棒グラフで表示（1.0 が計画どおりの基準線） */
+function SpiCpiBarChart({ evm }) {
+  const theme = useTheme();
+  const colorFor = (v) => {
+    if (v === null || !Number.isFinite(v)) return theme.palette.grey[400];
+    if (v >= 1.0) return theme.palette.success.main;
+    if (v >= 0.9) return theme.palette.warning.main;
+    return theme.palette.error.main;
+  };
+
+  const rows = [];
+  if (evm.spi !== null && Number.isFinite(evm.spi)) {
+    rows.push({
+      name: 'SPI',
+      desc: '進捗効率',
+      value: evm.spi,
+      fill: colorFor(evm.spi),
+    });
+  }
+  if (evm.cpi !== null && Number.isFinite(evm.cpi)) {
+    rows.push({
+      name: 'CPI',
+      desc: 'コスト効率',
+      value: evm.cpi,
+      fill: colorFor(evm.cpi),
+    });
+  }
+
+  if (rows.length === 0) {
+    return (
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2, mb: 2 }}>
+        SPI は PV・EV、CPI は EV・AC が揃うと表示されます。AC は月に一度などで構いません（未入力の月は CPI 棒は出ません）。
+      </Typography>
+    );
+  }
+
+  const maxVal = Math.max(1, ...rows.map((r) => r.value));
+  const yMax = Math.max(1.15, Math.ceil(maxVal * 115) / 100);
+
+  return (
+    <Box sx={{ width: '100%', mt: 2.5, mb: 2 }}>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.25 }}>
+        SPI・CPI の比較（縦軸 1.0 = 計画どおり、以上は良好傾向）
+      </Typography>
+      <Box sx={{ width: '100%', height: 200 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart
+            data={rows}
+            margin={{ top: 32, right: 12, left: 4, bottom: 8 }}
+            barCategoryGap="28%"
+          >
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme.palette.divider} />
+            <XAxis
+              dataKey="name"
+              tick={{ fontSize: 12, fill: theme.palette.text.secondary }}
+              tickLine={false}
+              axisLine={{ stroke: theme.palette.divider }}
+            />
+            <YAxis
+              domain={[0, yMax]}
+              tick={{ fontSize: 11, fill: theme.palette.text.secondary }}
+              tickCount={6}
+              width={36}
+              axisLine={{ stroke: theme.palette.divider }}
+            />
+            <ReferenceLine
+              y={1}
+              stroke={theme.palette.text.disabled}
+              strokeDasharray="5 5"
+              label={{
+                value: '基準 1.0',
+                position: 'insideTopRight',
+                fill: theme.palette.text.secondary,
+                fontSize: 11,
+              }}
+            />
+            <ReTooltip
+              formatter={(v) => (typeof v === 'number' ? v.toFixed(3) : v)}
+              labelFormatter={(_, p) => {
+                const pl = p?.[0]?.payload;
+                return pl ? `${pl.name}（${pl.desc}）` : '';
+              }}
+            />
+            <Bar dataKey="value" radius={[6, 6, 0, 0]} maxBarSize={72}>
+              {rows.map((entry, i) => (
+                <Cell key={`cell-${i}`} fill={entry.fill} />
+              ))}
+              <LabelList
+                dataKey="value"
+                position="top"
+                formatter={(v) => (typeof v === 'number' ? v.toFixed(2) : '')}
+                style={{ fontSize: 12, fill: theme.palette.text.primary, fontWeight: 600 }}
+              />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </Box>
+      <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, flexWrap: 'wrap', mt: 2 }}>
+        {rows.map((r) => (
+          <Typography key={r.name} variant="caption" color="text.secondary">
+            {r.name}: {r.desc}
+          </Typography>
+        ))}
+      </Box>
+    </Box>
+  );
+}
+
 export default function ProgressTracking() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [project, setProject] = useState(null);
   const [records, setRecords] = useState([]);
@@ -76,8 +237,18 @@ export default function ProgressTracking() {
   // コメント入力
   const [commentInput, setCommentInput] = useState({});
 
-  // タスク追加成功メッセージ
-  const [successMsg, setSuccessMsg] = useState('');
+  // タスク追加フィードバック（成功・失敗・警告）
+  const [snack, setSnack] = useState({ message: '', severity: 'success', taskLinkId: null });
+  /** 進行中の「タスクに追加」操作（コメント／評価／下書きごと。全体で1つにしない） */
+  const [taskAddInFlight, setTaskAddInFlight] = useState(null);
+  /** 下書きから直近作成したタスクID（再追加を阻害しない） */
+  const [lastDraftTaskByRecord, setLastDraftTaskByRecord] = useState({});
+
+  const taskAddKey = {
+    comment: (commentId) => `comment:${commentId}`,
+    eval: (recordId) => `eval:${recordId}`,
+    draft: (recordId) => `draft:${recordId}`,
+  };
 
   useEffect(() => {
     const u = localStorage.getItem('user');
@@ -91,20 +262,32 @@ export default function ProgressTracking() {
     });
   };
 
-  const loadRecords = () => {
+  const loadRecords = () =>
     progressApi
       .getAll(id)
       .then((res) => {
         const data = res.data;
         setRecords(Array.isArray(data) ? data : []);
       })
-      .catch(() => setRecords([]));
-  };
+      .catch(() => {
+        setRecords([]);
+      });
 
   useEffect(() => {
     loadProject();
     loadRecords();
   }, [id]);
+
+  useEffect(() => {
+    const hash = location.hash || '';
+    if (!hash.startsWith('#evm-') || records.length === 0) return undefined;
+    const anchor = decodeURIComponent(hash.slice(1));
+    const raf = requestAnimationFrame(() => {
+      const el = document.getElementById(anchor);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [location.hash, records]);
 
   // 新規作成
   const handleAdd = async () => {
@@ -187,21 +370,114 @@ export default function ProgressTracking() {
     loadRecords();
   };
 
-  // タスクに追加
-  const handleAddAsTask = async (comment) => {
+  const taskDeepLink = (taskId) => `/projects/${id}#task-${taskId}`;
+
+  const handleAddCommentAsTask = async (record, comment) => {
+    if (comment.linked_task_id) return;
+    const k = taskAddKey.comment(comment.id);
+    if (taskAddInFlight === k) return;
+    setTaskAddInFlight(k);
     try {
-      await tasksApi.create({
-        project_id: id,
-        title: comment.comment,
-        description: '進捗確認コメントより追加',
-        status: 'todo',
-        priority: 'medium',
+      const res = await progressApi.addCommentAsTask(id, record.id, comment.id);
+      await loadRecords();
+      const tid = res.data?.task?.id;
+      setSnack({
+        message: 'タスクに追加しました',
+        severity: 'success',
+        taskLinkId: tid || null,
       });
-      setSuccessMsg('タスクに追加しました');
     } catch (e) {
-      setSuccessMsg('タスクの追加に失敗しました');
+      if (e.response?.status === 409) {
+        await loadRecords();
+        const tid = e.response?.data?.task_id || null;
+        setSnack({
+          message: e.response?.data?.error || '既にタスクに追加済みです',
+          severity: 'warning',
+          taskLinkId: tid,
+        });
+      } else {
+        const err = e.response?.data?.error || e.message || '不明なエラー';
+        setSnack({ message: `タスクの追加に失敗しました: ${err}`, severity: 'error', taskLinkId: null });
+      }
+    } finally {
+      setTaskAddInFlight((cur) => (cur === k ? null : cur));
     }
   };
+
+  const handleAddEvalAsTask = async (record) => {
+    if (record.evaluation_linked_task_id) return;
+    const k = taskAddKey.eval(record.id);
+    if (taskAddInFlight === k) return;
+    const evaluation = String(
+      evalEditing[record.id] !== undefined ? evalEditing[record.id] : (record.evaluation || '')
+    ).trim();
+    if (!evaluation) {
+      setSnack({ message: '評価コメントを入力してください', severity: 'warning', taskLinkId: null });
+      return;
+    }
+    setTaskAddInFlight(k);
+    try {
+      const res = await progressApi.addEvaluationAsTask(id, record.id, { evaluation });
+      await loadRecords();
+      const tid = res.data?.task?.id;
+      setSnack({
+        message: 'タスクに追加しました',
+        severity: 'success',
+        taskLinkId: tid || null,
+      });
+    } catch (e) {
+      if (e.response?.status === 409) {
+        await loadRecords();
+        const tid = e.response?.data?.task_id || null;
+        setSnack({
+          message: e.response?.data?.error || '既にタスクに追加済みです',
+          severity: 'warning',
+          taskLinkId: tid,
+        });
+      } else {
+        const err = e.response?.data?.error || e.message || '不明なエラー';
+        setSnack({ message: `タスクの追加に失敗しました: ${err}`, severity: 'error', taskLinkId: null });
+      }
+    } finally {
+      setTaskAddInFlight((cur) => (cur === k ? null : cur));
+    }
+  };
+
+  const handleAddDraftCommentAsTask = async (recordId) => {
+    const k = taskAddKey.draft(recordId);
+    if (taskAddInFlight === k) return;
+    const text = (commentInput[recordId] || '').trim();
+    if (!text) {
+      setSnack({ message: '内容が空のためタスクに追加できません', severity: 'warning', taskLinkId: null });
+      return;
+    }
+    const safeTitle = text.length > 500 ? `${text.slice(0, 497)}…` : text;
+    setTaskAddInFlight(k);
+    try {
+      const res = await tasksApi.create({
+        project_id: id,
+        title: safeTitle,
+        description: '進捗確認（EVM）／タイムライン（入力中テキスト）より',
+        status: 'todo',
+        priority: 'medium',
+        progress_record_id: recordId,
+      });
+      setLastDraftTaskByRecord((prev) => ({ ...prev, [recordId]: res.data.id }));
+      setSnack({
+        message: 'タスクに追加しました（投稿せず）',
+        severity: 'success',
+        taskLinkId: res.data.id,
+      });
+    } catch (e) {
+      const err = e.response?.data?.error || e.message || '不明なエラー';
+      setSnack({ message: `タスクの追加に失敗しました: ${err}`, severity: 'error', taskLinkId: null });
+    } finally {
+      setTaskAddInFlight((cur) => (cur === k ? null : cur));
+    }
+  };
+
+  const progressCommentHash = (commentId) => `evm-comment-${commentId}`;
+  const progressEvalHash = (recordId) => `evm-eval-${recordId}`;
 
   // グラフ用データ（record_date ASC）
   const chartData = records.map(r => ({
@@ -291,7 +567,7 @@ export default function ProgressTracking() {
           const isEvalDirty = evalEditing[record.id] !== undefined && evalEditing[record.id] !== (record.evaluation || '');
 
           return (
-            <Card key={record.id} sx={{ mb: 3 }}>
+            <Card key={record.id} id={`evm-record-${record.id}`} sx={{ mb: 3, scrollMarginTop: 88 }}>
               <CardContent>
                 {/* ヘッダー */}
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
@@ -325,10 +601,11 @@ export default function ProgressTracking() {
                   <Grid container spacing={2}>
                     <Grid item xs={6} sm={3}>
                       <TextField
-                        label="BAC"
+                        label="BAC（完成時予算／Budget at Completion）"
                         type="number"
                         size="small"
                         fullWidth
+                        InputLabelProps={{ shrink: true }}
                         value={isEditing ? editForm.bac : (record.bac ?? '')}
                         onChange={e => setEditForm(prev => ({ ...prev, bac: e.target.value }))}
                         InputProps={{ readOnly: !isEditing }}
@@ -336,10 +613,11 @@ export default function ProgressTracking() {
                     </Grid>
                     <Grid item xs={6} sm={3}>
                       <TextField
-                        label="PV"
+                        label="PV（計画価値／Planned Value）"
                         type="number"
                         size="small"
                         fullWidth
+                        InputLabelProps={{ shrink: true }}
                         value={isEditing ? editForm.pv : (record.pv ?? '')}
                         onChange={e => setEditForm(prev => ({ ...prev, pv: e.target.value }))}
                         InputProps={{ readOnly: !isEditing }}
@@ -347,10 +625,11 @@ export default function ProgressTracking() {
                     </Grid>
                     <Grid item xs={6} sm={3}>
                       <TextField
-                        label="EV"
+                        label="EV（出来高の価値／Earned Value）"
                         type="number"
                         size="small"
                         fullWidth
+                        InputLabelProps={{ shrink: true }}
                         value={isEditing ? editForm.ev : (record.ev ?? '')}
                         onChange={e => setEditForm(prev => ({ ...prev, ev: e.target.value }))}
                         InputProps={{ readOnly: !isEditing }}
@@ -358,10 +637,13 @@ export default function ProgressTracking() {
                     </Grid>
                     <Grid item xs={6} sm={3}>
                       <TextField
-                        label="AC"
+                        label="AC（実績コスト／Actual Cost）"
                         type="number"
                         size="small"
                         fullWidth
+                        InputLabelProps={{ shrink: true }}
+                        helperText="任意（月次などで未入力可）"
+                        FormHelperTextProps={{ sx: { mt: 0.25 } }}
                         value={isEditing ? editForm.ac : (record.ac ?? '')}
                         onChange={e => setEditForm(prev => ({ ...prev, ac: e.target.value }))}
                         InputProps={{ readOnly: !isEditing }}
@@ -382,12 +664,27 @@ export default function ProgressTracking() {
                     <Chip label={`ETC: ${fmt(evm.etc)}`} color="default" size="small" variant="outlined" />
                     <Chip label={`VAC: ${fmt(evm.vac)}`} color={varColor(evm.vac)} size="small" variant="outlined" />
                   </Box>
+                  <SpiCpiBarChart evm={evm} />
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{
+                      mt: 3,
+                      p: 1.5,
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
+                      whiteSpace: 'pre-line',
+                      lineHeight: 1.65,
+                    }}
+                  >
+                    {summarizeEVM(evm)}
+                  </Typography>
                 </Box>
 
                 {/* 評価コメント */}
                 <Box sx={{ mb: 2 }}>
                   <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>評価コメント</Typography>
-                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start' }}>
+                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', flexWrap: 'wrap' }}>
                     <TextField
                       multiline
                       minRows={2}
@@ -396,12 +693,47 @@ export default function ProgressTracking() {
                       placeholder="評価コメントを入力..."
                       value={evalVal}
                       onChange={e => setEvalEditing(prev => ({ ...prev, [record.id]: e.target.value }))}
+                      sx={{ flex: '1 1 240px', minWidth: 0 }}
                     />
-                    {isEvalDirty && (
-                      <Button variant="contained" size="small" onClick={() => handleEvalSave(record)} sx={{ mt: 0.5, whiteSpace: 'nowrap' }}>
-                        保存
-                      </Button>
-                    )}
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, alignItems: 'stretch' }}>
+                      {isEvalDirty && (
+                        <Button variant="contained" size="small" onClick={() => handleEvalSave(record)} sx={{ whiteSpace: 'nowrap' }}>
+                          保存
+                        </Button>
+                      )}
+                      {record.evaluation_linked_task_id ? (
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-start' }}>
+                          <Link
+                            component={RouterLink}
+                            to={taskDeepLink(record.evaluation_linked_task_id)}
+                            variant="body2"
+                            sx={{ whiteSpace: 'nowrap' }}
+                          >
+                            作成したタスクを開く
+                          </Link>
+                          <Link
+                            component={RouterLink}
+                            to={`/projects/${id}/progress#${progressEvalHash(record.id)}`}
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ whiteSpace: 'nowrap' }}
+                          >
+                            この評価コメント位置へ
+                          </Link>
+                        </Box>
+                      ) : (
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          startIcon={<PlaylistAddIcon />}
+                          disabled={taskAddInFlight === taskAddKey.eval(record.id) || !String(evalVal || '').trim()}
+                          onClick={() => handleAddEvalAsTask(record)}
+                          sx={{ whiteSpace: 'nowrap' }}
+                        >
+                          評価をタスクに追加
+                        </Button>
+                      )}
+                    </Box>
                   </Box>
                 </Box>
 
@@ -417,9 +749,10 @@ export default function ProgressTracking() {
                       {comments.map(c => (
                         <ListItem
                           key={c.id}
+                          id={progressCommentHash(c.id)}
                           alignItems="flex-start"
                           disableGutters
-                          sx={{ pr: 0 }}
+                          sx={{ pr: 0, scrollMarginTop: 88 }}
                         >
                           <ListItemAvatar sx={{ minWidth: 36 }}>
                             <Avatar sx={{ width: 28, height: 28, fontSize: 12 }}>{c.user_name?.charAt(0)}</Avatar>
@@ -434,12 +767,38 @@ export default function ProgressTracking() {
                             secondary={
                               <Box>
                                 <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{c.comment}</Typography>
-                                <Box sx={{ display: 'flex', gap: 0.5, mt: 0.5 }}>
-                                  <Tooltip title="タスクに追加">
-                                    <IconButton size="small" onClick={() => handleAddAsTask(c)}>
-                                      <PlaylistAddIcon fontSize="small" color="primary" />
-                                    </IconButton>
-                                  </Tooltip>
+                                <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, mt: 0.75 }}>
+                                  {c.linked_task_id ? (
+                                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, alignItems: 'flex-start' }}>
+                                      <Link
+                                        component={RouterLink}
+                                        to={taskDeepLink(c.linked_task_id)}
+                                        variant="body2"
+                                        sx={{ textTransform: 'none' }}
+                                      >
+                                        作成したタスクを開く
+                                      </Link>
+                                      <Link
+                                        component={RouterLink}
+                                        to={`/projects/${id}/progress#${progressCommentHash(c.id)}`}
+                                        variant="caption"
+                                        color="text.secondary"
+                                      >
+                                        このコメント位置へ
+                                      </Link>
+                                    </Box>
+                                  ) : (
+                                    <Button
+                                      variant="text"
+                                      size="small"
+                                      startIcon={<PlaylistAddIcon fontSize="small" />}
+                                      disabled={taskAddInFlight === taskAddKey.comment(c.id)}
+                                      onClick={() => handleAddCommentAsTask(record, c)}
+                                      sx={{ textTransform: 'none', minHeight: 32 }}
+                                    >
+                                      タスクに追加
+                                    </Button>
+                                  )}
                                   {currentUser && c.user_id === currentUser.id && (
                                     <Tooltip title="削除">
                                       <IconButton size="small" onClick={() => handleDeleteComment(record.id, c.id)}>
@@ -457,29 +816,67 @@ export default function ProgressTracking() {
                   )}
 
                   {/* コメント入力 */}
-                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-end' }}>
-                    <TextField
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-end' }}>
+                      <TextField
+                        size="small"
+                        fullWidth
+                        placeholder="コメントを入力..."
+                        multiline
+                        maxRows={4}
+                        value={commentInput[record.id] || ''}
+                        onChange={e => setCommentInput(prev => ({ ...prev, [record.id]: e.target.value }))}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            handleAddComment(record.id);
+                          }
+                        }}
+                      />
+                      <Tooltip title="コメントを投稿">
+                        <span>
+                          <IconButton
+                            color="primary"
+                            onClick={() => handleAddComment(record.id)}
+                            disabled={!(commentInput[record.id] || '').trim()}
+                          >
+                            <SendIcon />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                    </Box>
+                    <Button
+                      variant="outlined"
                       size="small"
-                      fullWidth
-                      placeholder="コメントを入力..."
-                      multiline
-                      maxRows={4}
-                      value={commentInput[record.id] || ''}
-                      onChange={e => setCommentInput(prev => ({ ...prev, [record.id]: e.target.value }))}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          handleAddComment(record.id);
-                        }
-                      }}
-                    />
-                    <IconButton
-                      color="primary"
-                      onClick={() => handleAddComment(record.id)}
-                      disabled={!(commentInput[record.id] || '').trim()}
+                      startIcon={<PlaylistAddIcon />}
+                      disabled={
+                        taskAddInFlight === taskAddKey.draft(record.id) || !(commentInput[record.id] || '').trim()
+                      }
+                      onClick={() => handleAddDraftCommentAsTask(record.id)}
+                      sx={{ alignSelf: 'flex-start', textTransform: 'none' }}
                     >
-                      <SendIcon />
-                    </IconButton>
+                      入力中の内容をタスクに追加（投稿せず）
+                    </Button>
+                    {lastDraftTaskByRecord[record.id] ? (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, alignItems: 'flex-start' }}>
+                        <Link
+                          component={RouterLink}
+                          to={taskDeepLink(lastDraftTaskByRecord[record.id])}
+                          variant="caption"
+                          sx={{ alignSelf: 'flex-start' }}
+                        >
+                          直近に作成したタスクを開く
+                        </Link>
+                        <Link
+                          component={RouterLink}
+                          to={`/projects/${id}/progress#${progressEvalHash(record.id)}`}
+                          variant="caption"
+                          color="text.secondary"
+                        >
+                          この進捗記録へ
+                        </Link>
+                      </Box>
+                    ) : null}
                   </Box>
                 </Box>
               </CardContent>
@@ -513,42 +910,48 @@ export default function ProgressTracking() {
           <Grid container spacing={2}>
             <Grid item xs={6}>
               <TextField
-                label="BAC（完成時予算）"
+                label="BAC（完成時予算／Budget at Completion）"
                 type="number"
                 value={addForm.bac}
                 onChange={e => setAddForm(prev => ({ ...prev, bac: e.target.value }))}
                 fullWidth
                 size="small"
+                InputLabelProps={{ shrink: true }}
               />
             </Grid>
             <Grid item xs={6}>
               <TextField
-                label="PV（計画価値）"
+                label="PV（計画価値／Planned Value）"
                 type="number"
                 value={addForm.pv}
                 onChange={e => setAddForm(prev => ({ ...prev, pv: e.target.value }))}
                 fullWidth
                 size="small"
+                InputLabelProps={{ shrink: true }}
               />
             </Grid>
             <Grid item xs={6}>
               <TextField
-                label="EV（出来高）"
+                label="EV（出来高の価値／Earned Value）"
                 type="number"
                 value={addForm.ev}
                 onChange={e => setAddForm(prev => ({ ...prev, ev: e.target.value }))}
                 fullWidth
                 size="small"
+                InputLabelProps={{ shrink: true }}
               />
             </Grid>
             <Grid item xs={6}>
               <TextField
-                label="AC（実際コスト）"
+                label="AC（実績コスト／Actual Cost）"
                 type="number"
                 value={addForm.ac}
                 onChange={e => setAddForm(prev => ({ ...prev, ac: e.target.value }))}
                 fullWidth
                 size="small"
+                InputLabelProps={{ shrink: true }}
+                helperText="任意（月次把握のため未入力可）"
+                FormHelperTextProps={{ sx: { mt: 0.25 } }}
               />
             </Grid>
           </Grid>
@@ -576,15 +979,31 @@ export default function ProgressTracking() {
         </DialogActions>
       </Dialog>
 
-      {/* タスク追加成功メッセージ */}
       <Snackbar
-        open={Boolean(successMsg)}
-        autoHideDuration={2000}
-        onClose={() => setSuccessMsg('')}
+        open={Boolean(snack.message)}
+        autoHideDuration={snack.severity === 'error' ? 5000 : 2800}
+        onClose={() => setSnack({ message: '', severity: 'success', taskLinkId: null })}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       >
-        <Alert onClose={() => setSuccessMsg('')} severity="success" sx={{ width: '100%' }}>
-          {successMsg}
+        <Alert
+          onClose={() => setSnack({ message: '', severity: 'success', taskLinkId: null })}
+          severity={snack.severity}
+          variant="filled"
+          sx={{ width: '100%' }}
+        >
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-start' }}>
+            <span>{snack.message}</span>
+            {snack.taskLinkId ? (
+              <Link
+                component={RouterLink}
+                to={`/projects/${id}#task-${snack.taskLinkId}`}
+                color="inherit"
+                sx={{ fontWeight: 600, textDecoration: 'underline' }}
+              >
+                作成したタスクを開く
+              </Link>
+            ) : null}
+          </Box>
         </Alert>
       </Snackbar>
     </Box>
