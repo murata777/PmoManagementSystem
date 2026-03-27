@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router({ mergeParams: true });
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
+const { validateAndNormalizeCommentInput } = require('../utils/commentPayload');
 
 // Helper: ensure phase_gate row exists and return its id
 async function ensurePhaseGate(client, projectId, phaseKey) {
@@ -150,8 +151,9 @@ router.put('/:phaseKey/metrics', async (req, res) => {
 router.post('/:phaseKey/comments', async (req, res) => {
   const { projectId, phaseKey } = req.params;
   const { comment } = req.body;
-  if (!comment || !comment.trim()) {
-    return res.status(400).json({ error: 'コメントを入力してください' });
+  const v = validateAndNormalizeCommentInput(String(comment ?? ''));
+  if (!v.ok) {
+    return res.status(400).json({ error: v.error });
   }
   const client = await pool.connect();
   try {
@@ -164,7 +166,7 @@ router.post('/:phaseKey/comments', async (req, res) => {
       `INSERT INTO phase_gate_comments (id, phase_gate_id, user_id, comment)
        VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [commentId, pgId, req.user.id, comment.trim()]
+      [commentId, pgId, req.user.id, v.value]
     );
 
     await client.query('COMMIT');

@@ -24,6 +24,13 @@ import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { projectsApi, tasksApi, customFieldsApi, taskCommentsApi, membersApi } from '../api';
+import CommentRichContent from '../components/CommentRichContent';
+import PastedImagesPreview from '../components/PastedImagesPreview';
+import {
+  encodeCommentForStorage,
+  tryConsumeClipboardImageAsDataUrl,
+  MAX_PASTED_IMAGES_PER_COMMENT,
+} from '../utils/commentImages';
 
 const TASK_STATUS = [
   { value: 'todo', label: '未着手' },
@@ -120,6 +127,7 @@ function taskStatusLabel(value) {
 function TaskCommentPanel({ task, currentUser, onTaskUpdated, members }) {
   const [comments, setComments] = useState([]);
   const [input, setInput] = useState('');
+  const [pastedImages, setPastedImages] = useState([]);
   const [assignee, setAssignee] = useState(task.assignee || '');
   const [status, setStatus] = useState(task.status || 'todo');
   const [loading, setLoading] = useState(false);
@@ -136,20 +144,23 @@ function TaskCommentPanel({ task, currentUser, onTaskUpdated, members }) {
 
   const assigneeChanged = assignee !== (task.assignee || '');
   const statusChanged = status !== (task.status || 'todo');
-  const canSend = input.trim() || assigneeChanged || statusChanged;
+  const commentPayload = encodeCommentForStorage(input, pastedImages);
+  const hasCommentBody = Boolean(commentPayload);
+  const canSend = hasCommentBody || assigneeChanged || statusChanged;
 
   const handleSend = async () => {
     if (!canSend) return;
     setLoading(true);
     try {
       await taskCommentsApi.create(task.id, {
-        comment: input.trim() || undefined,
+        comment: hasCommentBody ? commentPayload : undefined,
         new_assignee: assigneeChanged ? assignee : undefined,
         old_assignee: assigneeChanged ? (task.assignee || '') : undefined,
         // 常に送り、サーバーが DB の現在値と比較して tasks.status を更新する
         new_status: status,
       });
       setInput('');
+      setPastedImages([]);
       loadComments();
       if (onTaskUpdated) onTaskUpdated();
     } finally {
@@ -268,7 +279,8 @@ function TaskCommentPanel({ task, currentUser, onTaskUpdated, members }) {
                       <Typography variant="caption" color="text.secondary">{formatDate(c.created_at)}</Typography>
                     </Box>
                   }
-                  secondary={<Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{c.comment}</Typography>}
+                  secondaryTypographyProps={{ component: 'div' }}
+                  secondary={<CommentRichContent value={c.comment} />}
                 />
               </ListItem>
             );
@@ -315,13 +327,30 @@ function TaskCommentPanel({ task, currentUser, onTaskUpdated, members }) {
             <Typography variant="caption" color="warning.dark">変更あり</Typography>
           )}
         </Box>
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+          クリップボードの画面キャプチャをこの欄に貼り付け（Ctrl+V）できます。最大 {MAX_PASTED_IMAGES_PER_COMMENT} 枚。
+        </Typography>
+        <PastedImagesPreview
+          images={pastedImages}
+          max={MAX_PASTED_IMAGES_PER_COMMENT}
+          onRemove={(index) => setPastedImages((prev) => prev.filter((_, i) => i !== index))}
+        />
         <Box sx={{ display: 'flex', gap: 1 }}>
           <TextField
             size="small"
             fullWidth
-            placeholder="コメントを入力... (Shift+Enterで改行)"
+            placeholder="コメントを入力... (Shift+Enterで送信、画像は貼り付け)"
             value={input}
             onChange={e => setInput(e.target.value)}
+            onPaste={async (e) => {
+              const url = await tryConsumeClipboardImageAsDataUrl(e.clipboardData);
+              if (url) {
+                e.preventDefault();
+                setPastedImages((prev) =>
+                  prev.length >= MAX_PASTED_IMAGES_PER_COMMENT ? prev : [...prev, url]
+                );
+              }
+            }}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
             multiline
             maxRows={4}

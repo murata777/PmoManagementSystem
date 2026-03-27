@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router({ mergeParams: true });
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
+const { validateAndNormalizeCommentInput } = require('../utils/commentPayload');
 
 const ALLOWED_TASK_STATUS = new Set(['todo', 'inprogress', 'review', 'done']);
 
@@ -25,7 +26,15 @@ router.get('/', async (req, res) => {
 // POST add a comment and/or assignee change and/or status change（タスクの status は DB 上の現在値と new_status を比較して更新）
 router.post('/', async (req, res) => {
   const { comment, new_assignee, old_assignee, new_status } = req.body;
-  const hasComment = comment && comment.trim();
+  let commentToStore = null;
+  if (comment !== undefined && comment !== null && String(comment).trim()) {
+    const v = validateAndNormalizeCommentInput(String(comment));
+    if (!v.ok) {
+      return res.status(400).json({ error: v.error });
+    }
+    commentToStore = v.value;
+  }
+  const hasComment = Boolean(commentToStore);
   const assigneeChanged = new_assignee !== undefined && new_assignee !== old_assignee;
 
   if (new_status !== undefined && !ALLOWED_TASK_STATUS.has(String(new_status))) {
@@ -61,7 +70,7 @@ router.post('/', async (req, res) => {
       const { rows } = await client.query(
         `INSERT INTO task_comments (id, task_id, user_id, comment, comment_type)
          VALUES ($1,$2,$3,$4,'comment') RETURNING *`,
-        [id, req.params.taskId, req.user.id, comment.trim()]
+        [id, req.params.taskId, req.user.id, commentToStore]
       );
       inserted.push(rows[0].id);
     }

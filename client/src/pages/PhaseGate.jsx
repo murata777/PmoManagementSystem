@@ -12,6 +12,13 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import SaveIcon from '@mui/icons-material/Save';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { projectsApi, phaseGatesApi } from '../api';
+import CommentRichContent from '../components/CommentRichContent';
+import PastedImagesPreview from '../components/PastedImagesPreview';
+import {
+  encodeCommentForStorage,
+  tryConsumeClipboardImageAsDataUrl,
+  MAX_PASTED_IMAGES_PER_COMMENT,
+} from '../utils/commentImages';
 
 // ============================================================
 // 工程定義
@@ -628,7 +635,8 @@ function MetricsCard({ group, phaseKey, metricsInput, onInputChange }) {
 function PhaseAccordion({ phase, gateData, currentUser, projectId, processType,
   metricsInput, onMetricsInputChange,
   commentInput, onCommentInputChange,
-  onStatusChange, onMetricsSave, onCommentAdd, onCommentDelete
+  onStatusChange, onMetricsSave, onCommentAdd, onCommentDelete,
+  commentPastedImages, onAddCommentPasteImage, onRemoveCommentPasteImage,
 }) {
   const status = gateData?.status || 'not_started';
   const statusInfo = getStatusInfo(status);
@@ -733,22 +741,36 @@ function PhaseAccordion({ phase, gateData, currentUser, projectId, processType,
                         <Typography variant="caption" color="text.secondary">{formatDate(c.created_at)}</Typography>
                       </Box>
                     }
-                    secondary={
-                      <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{c.comment}</Typography>
-                    }
+                    secondaryTypographyProps={{ component: 'div' }}
+                    secondary={<CommentRichContent value={c.comment} />}
                   />
                 </ListItem>
               ))}
             </List>
           )}
 
+          <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
+            画面キャプチャは貼り付け（Ctrl+V）できます（最大 {MAX_PASTED_IMAGES_PER_COMMENT} 枚）。
+          </Typography>
+          <PastedImagesPreview
+            images={commentPastedImages || []}
+            max={MAX_PASTED_IMAGES_PER_COMMENT}
+            onRemove={onRemoveCommentPasteImage}
+          />
           <Box sx={{ display: 'flex', gap: 1 }}>
             <TextField
               size="small"
               fullWidth
-              placeholder="コメントを入力..."
+              placeholder="コメントを入力...（画像は貼り付け）"
               value={commentInput}
               onChange={e => onCommentInputChange(phase.key, e.target.value)}
+              onPaste={async (e) => {
+                const url = await tryConsumeClipboardImageAsDataUrl(e.clipboardData);
+                if (url) {
+                  e.preventDefault();
+                  onAddCommentPasteImage(url);
+                }
+              }}
               onKeyDown={e => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
@@ -763,7 +785,7 @@ function PhaseAccordion({ phase, gateData, currentUser, projectId, processType,
                 <IconButton
                   color="primary"
                   onClick={() => onCommentAdd(phase.key)}
-                  disabled={!commentInput?.trim()}
+                  disabled={!encodeCommentForStorage(commentInput || '', commentPastedImages || [])}
                 >
                   <SendIcon />
                 </IconButton>
@@ -788,6 +810,7 @@ export default function PhaseGate() {
   const [gatesData, setGatesData] = useState([]);
   const [metricsInput, setMetricsInput] = useState({});
   const [commentInput, setCommentInput] = useState({});
+  const [commentImages, setCommentImages] = useState({});
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -888,12 +911,31 @@ export default function PhaseGate() {
     setCommentInput(prev => ({ ...prev, [phaseKey]: val }));
   };
 
+  const handleAddCommentPasteImage = (phaseKey, dataUrl) => {
+    setCommentImages((prev) => {
+      const cur = prev[phaseKey] || [];
+      if (cur.length >= MAX_PASTED_IMAGES_PER_COMMENT) return prev;
+      return { ...prev, [phaseKey]: [...cur, dataUrl] };
+    });
+  };
+
+  const handleRemoveCommentPasteImage = (phaseKey, index) => {
+    setCommentImages((prev) => {
+      const cur = [...(prev[phaseKey] || [])];
+      cur.splice(index, 1);
+      return { ...prev, [phaseKey]: cur };
+    });
+  };
+
   const handleCommentAdd = async (phaseKey) => {
-    const comment = commentInput[phaseKey];
-    if (!comment?.trim()) return;
+    const text = commentInput[phaseKey] || '';
+    const imgs = commentImages[phaseKey] || [];
+    const payload = encodeCommentForStorage(text, imgs);
+    if (!payload) return;
     try {
-      await phaseGatesApi.addComment(id, phaseKey, comment.trim());
-      setCommentInput(prev => ({ ...prev, [phaseKey]: '' }));
+      await phaseGatesApi.addComment(id, phaseKey, payload);
+      setCommentInput((prev) => ({ ...prev, [phaseKey]: '' }));
+      setCommentImages((prev) => ({ ...prev, [phaseKey]: [] }));
       await loadData();
     } catch (e) {
       console.error(e);
@@ -980,6 +1022,9 @@ export default function PhaseGate() {
             onMetricsSave={handleMetricsSave}
             onCommentAdd={handleCommentAdd}
             onCommentDelete={handleCommentDelete}
+            commentPastedImages={commentImages[phase.key] || []}
+            onAddCommentPasteImage={(dataUrl) => handleAddCommentPasteImage(phase.key, dataUrl)}
+            onRemoveCommentPasteImage={(index) => handleRemoveCommentPasteImage(phase.key, index)}
           />
         ))}
       </Box>

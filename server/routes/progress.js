@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router({ mergeParams: true });
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
+const { validateAndNormalizeCommentInput, plainTextFromStoredComment } = require('../utils/commentPayload');
 
 async function canAccess(userId, projectId) {
   const { rows } = await pool.query(
@@ -233,8 +234,9 @@ router.post('/:recordId/duplicate', async (req, res) => {
 router.post('/:recordId/comments', async (req, res) => {
   const { projectId, recordId } = req.params;
   const { comment } = req.body;
-  if (!comment || !comment.trim()) {
-    return res.status(400).json({ error: 'コメントを入力してください' });
+  const v = validateAndNormalizeCommentInput(String(comment ?? ''));
+  if (!v.ok) {
+    return res.status(400).json({ error: v.error });
   }
   try {
     if (!(await canAccess(req.user.id, projectId))) {
@@ -251,7 +253,7 @@ router.post('/:recordId/comments', async (req, res) => {
       `INSERT INTO progress_comments (id, record_id, user_id, comment)
        VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [id, recordId, req.user.id, comment.trim()]
+      [id, recordId, req.user.id, v.value]
     );
 
     const { rows: full } = await pool.query(
@@ -292,7 +294,7 @@ router.post('/:recordId/comments/:commentId/add-task', async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: '既にタスクに追加済みです', task_id: row.linked_task_id });
     }
-    const title = String(row.comment || '').trim();
+    const title = plainTextFromStoredComment(row.comment);
     if (!title) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'コメントが空です' });

@@ -24,6 +24,14 @@ import {
   BarChart, Bar, Cell, LabelList
 } from 'recharts';
 import { projectsApi, progressApi, tasksApi } from '../api';
+import CommentRichContent from '../components/CommentRichContent';
+import PastedImagesPreview from '../components/PastedImagesPreview';
+import {
+  encodeCommentForStorage,
+  tryConsumeClipboardImageAsDataUrl,
+  plainTextForTaskTitleFromDraft,
+  MAX_PASTED_IMAGES_PER_COMMENT,
+} from '../utils/commentImages';
 
 const TASK_STATUS = [
   { value: 'todo', label: '未着手' },
@@ -340,6 +348,8 @@ export default function ProgressTracking() {
 
   // コメント入力
   const [commentInput, setCommentInput] = useState({});
+  /** recordId -> 貼り付け画像 data URL */
+  const [commentPastedImages, setCommentPastedImages] = useState({});
 
   // タスク追加フィードバック（成功・失敗・警告）
   const [snack, setSnack] = useState({ message: '', severity: 'success', taskLinkId: null, taskStatus: null });
@@ -531,10 +541,13 @@ export default function ProgressTracking() {
 
   // コメント追加
   const handleAddComment = async (recordId) => {
-    const text = (commentInput[recordId] || '').trim();
-    if (!text) return;
-    await progressApi.addComment(id, recordId, text);
-    setCommentInput(prev => ({ ...prev, [recordId]: '' }));
+    const text = commentInput[recordId] || '';
+    const imgs = commentPastedImages[recordId] || [];
+    const payload = encodeCommentForStorage(text, imgs);
+    if (!payload) return;
+    await progressApi.addComment(id, recordId, payload);
+    setCommentInput((prev) => ({ ...prev, [recordId]: '' }));
+    setCommentPastedImages((prev) => ({ ...prev, [recordId]: [] }));
     loadRecords();
   };
 
@@ -636,12 +649,14 @@ export default function ProgressTracking() {
   const handleAddDraftCommentAsTask = async (recordId) => {
     const k = taskAddKey.draft(recordId);
     if (taskAddInFlight === k) return;
-    const text = (commentInput[recordId] || '').trim();
-    if (!text) {
+    const text = commentInput[recordId] || '';
+    const imgs = commentPastedImages[recordId] || [];
+    const title = plainTextForTaskTitleFromDraft(text, imgs);
+    if (!title) {
       setSnack({ message: '内容が空のためタスクに追加できません', severity: 'warning', taskLinkId: null, taskStatus: null });
       return;
     }
-    const safeTitle = text.length > 500 ? `${text.slice(0, 497)}…` : text;
+    const safeTitle = title.length > 500 ? `${title.slice(0, 497)}…` : title;
     setTaskAddInFlight(k);
     try {
       const res = await tasksApi.create({
@@ -1088,9 +1103,10 @@ export default function ProgressTracking() {
                                   <Typography variant="caption" color="text.secondary">{formatDate(c.created_at)}</Typography>
                                 </Box>
                               }
+                              secondaryTypographyProps={{ component: 'div' }}
                               secondary={
                                 <Box>
-                                  <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{c.comment}</Typography>
+                                  <CommentRichContent value={c.comment} />
                                   <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, mt: 0.75 }}>
                                     {c.linked_task_id ? (
                                       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, alignItems: 'flex-start' }}>
@@ -1149,15 +1165,40 @@ export default function ProgressTracking() {
 
                     {/* コメント入力 */}
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      <Typography variant="caption" color="text.secondary">
+                        画面キャプチャはこの欄に貼り付け（Ctrl+V）できます（最大 {MAX_PASTED_IMAGES_PER_COMMENT} 枚）。
+                      </Typography>
+                      <PastedImagesPreview
+                        images={commentPastedImages[record.id] || []}
+                        max={MAX_PASTED_IMAGES_PER_COMMENT}
+                        onRemove={(index) =>
+                          setCommentPastedImages((prev) => {
+                            const cur = [...(prev[record.id] || [])];
+                            cur.splice(index, 1);
+                            return { ...prev, [record.id]: cur };
+                          })
+                        }
+                      />
                       <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-end' }}>
                         <TextField
                           size="small"
                           fullWidth
-                          placeholder="コメントを入力..."
+                          placeholder="コメントを入力...（画像は貼り付け）"
                           multiline
                           maxRows={4}
                           value={commentInput[record.id] || ''}
                           onChange={e => setCommentInput(prev => ({ ...prev, [record.id]: e.target.value }))}
+                          onPaste={async (e) => {
+                            const url = await tryConsumeClipboardImageAsDataUrl(e.clipboardData);
+                            if (url) {
+                              e.preventDefault();
+                              setCommentPastedImages((prev) => {
+                                const cur = prev[record.id] || [];
+                                if (cur.length >= MAX_PASTED_IMAGES_PER_COMMENT) return prev;
+                                return { ...prev, [record.id]: [...cur, url] };
+                              });
+                            }
+                          }}
                           onKeyDown={e => {
                             if (e.key === 'Enter' && !e.shiftKey) {
                               e.preventDefault();
@@ -1170,7 +1211,12 @@ export default function ProgressTracking() {
                             <IconButton
                               color="primary"
                               onClick={() => handleAddComment(record.id)}
-                              disabled={!(commentInput[record.id] || '').trim()}
+                              disabled={
+                                !encodeCommentForStorage(
+                                  commentInput[record.id] || '',
+                                  commentPastedImages[record.id] || []
+                                )
+                              }
                             >
                               <SendIcon />
                             </IconButton>
@@ -1182,7 +1228,11 @@ export default function ProgressTracking() {
                         size="small"
                         startIcon={<PlaylistAddIcon />}
                         disabled={
-                          taskAddInFlight === taskAddKey.draft(record.id) || !(commentInput[record.id] || '').trim()
+                          taskAddInFlight === taskAddKey.draft(record.id) ||
+                          !plainTextForTaskTitleFromDraft(
+                            commentInput[record.id] || '',
+                            commentPastedImages[record.id] || []
+                          )
                         }
                         onClick={() => handleAddDraftCommentAsTask(record.id)}
                         sx={{ alignSelf: 'flex-start', textTransform: 'none' }}
