@@ -26,6 +26,8 @@ export const projectsApi = {
   create: (data) => api.post('/projects', data),
   update: (id, data) => api.put(`/projects/${id}`, data),
   delete: (id) => api.delete(`/projects/${id}`),
+  /** タスクは複製しない。カスタム項目は複製。body.name で新プロジェクト名を指定可 */
+  duplicate: (id, body) => api.post(`/projects/${id}/duplicate`, body || {}),
 };
 
 export const tasksApi = {

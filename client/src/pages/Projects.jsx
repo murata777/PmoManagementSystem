@@ -4,11 +4,12 @@ import {
   Box, Typography, Button, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, Paper, Chip, IconButton, Dialog, DialogTitle,
   DialogContent, DialogActions, TextField, MenuItem,
-  Divider, Alert
+  Divider, Alert, Tooltip
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import GroupIcon from '@mui/icons-material/Group';
 import { projectsApi, groupsApi, membersApi } from '../api';
 import { fmtEvmIndex, evmIndexChipColor } from '../utils/evm';
@@ -54,6 +55,11 @@ export default function Projects() {
   const [newMemberForm, setNewMemberForm] = useState(EMPTY_MEMBER_FORM);
   const [memberError, setMemberError] = useState('');
   const [memberAdded, setMemberAdded] = useState('');
+  const [dupOpen, setDupOpen] = useState(false);
+  const [dupSource, setDupSource] = useState(null);
+  const [dupName, setDupName] = useState('');
+  const [dupSaving, setDupSaving] = useState(false);
+  const [dupError, setDupError] = useState('');
   const navigate = useNavigate();
 
   const load = () => projectsApi.getAll().then(res => setProjects(res.data));
@@ -136,6 +142,30 @@ export default function Projects() {
     }
   };
 
+  const openDuplicate = (p, e) => {
+    e?.stopPropagation?.();
+    setDupSource(p);
+    setDupName(`${p.name}（コピー）`);
+    setDupError('');
+    setDupOpen(true);
+  };
+
+  const handleDuplicate = async () => {
+    if (!dupSource || !dupName.trim()) return;
+    setDupSaving(true);
+    setDupError('');
+    try {
+      const res = await projectsApi.duplicate(dupSource.id, { name: dupName.trim() });
+      setDupOpen(false);
+      setDupSource(null);
+      navigate(`/projects/${res.data.id}`);
+    } catch (err) {
+      setDupError(err.response?.data?.error || '複製に失敗しました');
+    } finally {
+      setDupSaving(false);
+    }
+  };
+
   return (
     <Box sx={{ mx: -2 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
@@ -203,6 +233,9 @@ export default function Projects() {
                   </Box>
                 </TableCell>
                 <TableCell align="right" onClick={e => e.stopPropagation()}>
+                  <Tooltip title="複製（タスクは含めません）">
+                    <IconButton size="small" onClick={(e) => openDuplicate(p, e)}><ContentCopyIcon /></IconButton>
+                  </Tooltip>
                   <IconButton size="small" onClick={() => handleOpen(p)}><EditIcon /></IconButton>
                   <IconButton size="small" color="error" onClick={() => handleDelete(p.id)}><DeleteIcon /></IconButton>
                 </TableCell>
@@ -304,6 +337,29 @@ export default function Projects() {
         <DialogActions>
           <Button onClick={() => setOpen(false)}>キャンセル</Button>
           <Button variant="contained" onClick={handleSave} disabled={!form.name}>保存</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={dupOpen} onClose={() => !dupSaving && setDupOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>プロジェクトを複製</DialogTitle>
+        <DialogContent sx={{ pt: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {dupError ? <Alert severity="error" onClose={() => setDupError('')}>{dupError}</Alert> : null}
+          <Typography variant="body2" color="text.secondary">
+            説明・ステータス・優先度・期間・担当PM・グループ・プロセスタイプとカスタム項目（定義と値）を引き継ぎます。タスク・フェーズゲート・進捗記録は複製しません。
+          </Typography>
+          <TextField
+            label="新しいプロジェクト名 *"
+            value={dupName}
+            onChange={(e) => setDupName(e.target.value)}
+            fullWidth
+            autoFocus
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDupOpen(false)} disabled={dupSaving}>キャンセル</Button>
+          <Button variant="contained" onClick={handleDuplicate} disabled={!dupName.trim() || dupSaving}>
+            {dupSaving ? '複製中…' : '複製'}
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>

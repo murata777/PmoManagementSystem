@@ -7,7 +7,7 @@ import {
   Paper, IconButton, Dialog, DialogTitle, DialogContent, DialogActions,
   TextField, MenuItem, Grid, Divider, Checkbox, FormControlLabel, Tooltip,
   Collapse, Avatar, List, ListItem, ListItemAvatar, ListItemText,
-  Breadcrumbs, Link
+  Breadcrumbs, Link, Alert
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
@@ -22,6 +22,7 @@ import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import PersonIcon from '@mui/icons-material/Person';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { projectsApi, tasksApi, customFieldsApi, taskCommentsApi, membersApi } from '../api';
 
 const TASK_STATUS = [
@@ -361,6 +362,10 @@ export default function ProjectDetail() {
   const [expandedTask, setExpandedTask] = useState(null); // taskId or null
   const [currentUser, setCurrentUser] = useState(null);
   const [members, setMembers] = useState([]);
+  const [dupOpen, setDupOpen] = useState(false);
+  const [dupName, setDupName] = useState('');
+  const [dupSaving, setDupSaving] = useState(false);
+  const [dupError, setDupError] = useState('');
 
   useEffect(() => {
     const u = localStorage.getItem('user');
@@ -428,6 +433,28 @@ export default function ProjectDetail() {
     setExpandedTask(prev => prev === taskId ? null : taskId);
   };
 
+  const openDuplicateDialog = () => {
+    if (!project) return;
+    setDupName(`${project.name}（コピー）`);
+    setDupError('');
+    setDupOpen(true);
+  };
+
+  const handleDuplicateProject = async () => {
+    if (!dupName.trim()) return;
+    setDupSaving(true);
+    setDupError('');
+    try {
+      const res = await projectsApi.duplicate(id, { name: dupName.trim() });
+      setDupOpen(false);
+      navigate(`/projects/${res.data.id}`);
+    } catch (err) {
+      setDupError(err.response?.data?.error || '複製に失敗しました');
+    } finally {
+      setDupSaving(false);
+    }
+  };
+
   if (!project) return null;
 
   return (
@@ -451,6 +478,9 @@ export default function ProjectDetail() {
       </Button>
       <Button variant="outlined" startIcon={<TrendingUpIcon />} onClick={() => navigate(`/projects/${id}/progress`)} sx={{ mb: 2, ml: 1 }}>
         進捗確認（EVM）
+      </Button>
+      <Button variant="outlined" startIcon={<ContentCopyIcon />} onClick={openDuplicateDialog} sx={{ mb: 2, ml: 1 }}>
+        プロジェクトを複製
       </Button>
 
       {/* プロジェクト概要 */}
@@ -669,6 +699,23 @@ export default function ProjectDetail() {
         <DialogActions>
           <Button onClick={() => setOpen(false)}>キャンセル</Button>
           <Button variant="contained" onClick={handleSave} disabled={!form.title}>保存</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={dupOpen} onClose={() => !dupSaving && setDupOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>プロジェクトを複製</DialogTitle>
+        <DialogContent sx={{ pt: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {dupError ? <Alert severity="error" onClose={() => setDupError('')}>{dupError}</Alert> : null}
+          <Typography variant="body2" color="text.secondary">
+            説明・ステータス・優先度・期間・担当PM・グループ・プロセスタイプとカスタム項目を引き継ぎます。タスク・フェーズゲート・進捗記録は複製しません。
+          </Typography>
+          <TextField label="新しいプロジェクト名 *" value={dupName} onChange={(e) => setDupName(e.target.value)} fullWidth autoFocus />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDupOpen(false)} disabled={dupSaving}>キャンセル</Button>
+          <Button variant="contained" onClick={handleDuplicateProject} disabled={!dupName.trim() || dupSaving}>
+            {dupSaving ? '複製中…' : '複製'}
+          </Button>
         </DialogActions>
       </Dialog>
 

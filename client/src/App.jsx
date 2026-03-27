@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { BrowserRouter, Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
 import {
-  AppBar, Toolbar, Typography, Drawer, List, ListItem, ListItemIcon,
-  ListItemText, Box, CssBaseline, IconButton, Menu, MenuItem, Avatar
+  AppBar, Toolbar, Typography, Drawer, List, ListItem, ListItemButton,
+  ListItemIcon, ListItemText, Box, IconButton, Menu, MenuItem, Avatar
 } from '@mui/material';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import FolderIcon from '@mui/icons-material/Folder';
@@ -20,6 +20,7 @@ import ChangePassword from './pages/ChangePassword';
 import ForgotPassword from './pages/ForgotPassword';
 import PhaseGate from './pages/PhaseGate';
 import ProgressTracking from './pages/ProgressTracking';
+import PhaseProgressTabLayout from './pages/PhaseProgressTabLayout';
 import { getStoredUser, clearAuth } from './auth';
 
 const DRAWER_WIDTH = 220;
@@ -36,19 +37,36 @@ function NavList() {
   const isSelected = (path) =>
     path === '/' ? location.pathname === '/' : location.pathname.startsWith(path);
   return (
-    <List>
-      {navItems.map((item) => (
-        <ListItem
-          key={item.path}
-          component={Link}
-          to={item.path}
-          selected={isSelected(item.path)}
-          sx={{ color: 'inherit', textDecoration: 'none', '&.Mui-selected': { bgcolor: 'primary.light', color: 'white' } }}
-        >
-          <ListItemIcon sx={{ color: 'inherit' }}>{item.icon}</ListItemIcon>
-          <ListItemText primary={item.text} />
-        </ListItem>
-      ))}
+    <List sx={{ px: 1, py: 1.5 }}>
+      {navItems.map((item) => {
+        const selected = isSelected(item.path);
+        return (
+          <ListItem key={item.path} disablePadding sx={{ mb: 0.5 }}>
+            <ListItemButton
+              component={Link}
+              to={item.path}
+              selected={selected}
+              sx={{
+                borderRadius: 2,
+                py: 1.1,
+                textDecoration: 'none',
+                '&.Mui-selected': {
+                  bgcolor: 'primary.main',
+                  color: 'primary.contrastText',
+                  '&:hover': { bgcolor: 'primary.dark' },
+                  '& .MuiListItemIcon-root': { color: 'inherit' },
+                },
+              }}
+            >
+              <ListItemIcon sx={{ minWidth: 42, color: 'inherit' }}>{item.icon}</ListItemIcon>
+              <ListItemText
+                primary={item.text}
+                primaryTypographyProps={{ variant: 'body2', fontWeight: selected ? 600 : 500 }}
+              />
+            </ListItemButton>
+          </ListItem>
+        );
+      })}
     </List>
   );
 }
@@ -64,11 +82,12 @@ function AppLayout({ user, onLogout }) {
   };
 
   return (
-    <Box sx={{ display: 'flex' }}>
-      <CssBaseline />
-      <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
-        <Toolbar>
-          <Typography variant="h6" noWrap sx={{ flexGrow: 1 }}>PMO Management System</Typography>
+    <Box sx={{ display: 'flex', minHeight: '100vh' }}>
+      <AppBar position="fixed" color="primary" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
+        <Toolbar sx={{ minHeight: 56 }}>
+          <Typography variant="h6" noWrap sx={{ flexGrow: 1, fontWeight: 600, letterSpacing: 0.2 }}>
+            PMO Management System
+          </Typography>
           <IconButton color="inherit" onClick={(e) => setAnchorEl(e.currentTarget)}>
             <Avatar sx={{ width: 32, height: 32, bgcolor: 'primary.dark', fontSize: 14 }}>
               {user?.name?.charAt(0) || <AccountCircleIcon />}
@@ -85,18 +104,30 @@ function AppLayout({ user, onLogout }) {
           </Menu>
         </Toolbar>
       </AppBar>
-      <Drawer variant="permanent" sx={{ width: DRAWER_WIDTH, flexShrink: 0, '& .MuiDrawer-paper': { width: DRAWER_WIDTH, boxSizing: 'border-box' } }}>
-        <Toolbar />
+      <Drawer
+        variant="permanent"
+        sx={{
+          width: DRAWER_WIDTH,
+          flexShrink: 0,
+          '& .MuiDrawer-paper': {
+            width: DRAWER_WIDTH,
+            boxSizing: 'border-box',
+          },
+        }}
+      >
+        <Toolbar sx={{ minHeight: 56 }} />
         <NavList />
       </Drawer>
-      <Box component="main" sx={{ flexGrow: 1, p: 3 }}>
-        <Toolbar />
+      <Box component="main" sx={{ flexGrow: 1, p: { xs: 2, sm: 3 }, bgcolor: 'background.default', width: 1, minWidth: 0 }}>
+        <Toolbar sx={{ minHeight: 56 }} />
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/:id" element={<ProjectDetail />} />
-          <Route path="/projects/:id/phase-gates" element={<PhaseGate />} />
-          <Route path="/projects/:id/progress" element={<ProgressTracking />} />
+          <Route element={<PhaseProgressTabLayout />}>
+            <Route path="/projects/:id/phase-gates" element={<PhaseGate />} />
+            <Route path="/projects/:id/progress" element={<ProgressTracking />} />
+          </Route>
           <Route path="/members" element={<Members />} />
           <Route path="/groups" element={<Groups />} />
           <Route path="/change-password" element={<ChangePassword />} />
