@@ -3,7 +3,7 @@ const router = express.Router({ mergeParams: true });
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
 
-const VALID_TYPES = ['text', 'number', 'date', 'checkbox'];
+const VALID_TYPES = ['text', 'number', 'date', 'checkbox', 'link'];
 
 // GET all custom fields for a project
 router.get('/', async (req, res) => {

@@ -15,6 +15,9 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import SendIcon from '@mui/icons-material/Send';
 import PlaylistAddIcon from '@mui/icons-material/PlaylistAdd';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import WbSunnyIcon from '@mui/icons-material/WbSunny';
+import CloudQueueIcon from '@mui/icons-material/CloudQueue';
+import ThunderstormIcon from '@mui/icons-material/Thunderstorm';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip as ReTooltip, Legend, ReferenceLine, ResponsiveContainer,
@@ -44,7 +47,12 @@ const normalizeLinks = (links) => {
       source = [];
     }
   }
-  return (Array.isArray(source) ? source : []).map((l) => ({
+  const arr = Array.isArray(source)
+    ? source
+    : (source && typeof source === 'object' && (source.type || source.value || source.label))
+      ? [source]
+      : [];
+  return arr.map((l) => ({
     id: l?.id || `tmp-${Math.random().toString(36).slice(2, 7)}`,
     type: l?.type === 'file' ? 'file' : 'url',
     value: String(l?.value || ''),
@@ -105,6 +113,14 @@ const calcEVM = (bac, pv, ev, ac) => {
 
 const indexColor = (v) => v === null ? 'default' : v >= 1.0 ? 'success' : v >= 0.9 ? 'warning' : 'error';
 const varColor = (v) => v === null ? 'default' : v >= 0 ? 'success' : 'error';
+const weatherByIndex = (v) => {
+  if (v === null || v === undefined || !Number.isFinite(v)) {
+    return { label: '未評価', icon: CloudQueueIcon, color: 'default' };
+  }
+  if (v >= 1.0) return { label: '晴れ', icon: WbSunnyIcon, color: 'success' };
+  if (v >= 0.9) return { label: 'くもり', icon: CloudQueueIcon, color: 'warning' };
+  return { label: '荒天', icon: ThunderstormIcon, color: 'error' };
+};
 
 const fmt = (v) => v === null || v === undefined ? '-' : Number(v).toLocaleString();
 const fmtIdx = (v) => v === null || v === undefined ? '-' : Number(v).toFixed(2);
@@ -172,19 +188,23 @@ function SpiCpiBarChart({ evm }) {
 
   const rows = [];
   if (evm.spi !== null && Number.isFinite(evm.spi)) {
+    const w = weatherByIndex(evm.spi);
     rows.push({
       name: 'SPI',
       desc: '進捗効率',
       value: evm.spi,
       fill: colorFor(evm.spi),
+      weatherEmoji: w.label === '晴れ' ? '☀️' : w.label === 'くもり' ? '☁️' : '⛈️',
     });
   }
   if (evm.cpi !== null && Number.isFinite(evm.cpi)) {
+    const w = weatherByIndex(evm.cpi);
     rows.push({
       name: 'CPI',
       desc: 'コスト効率',
       value: evm.cpi,
       fill: colorFor(evm.cpi),
+      weatherEmoji: w.label === '晴れ' ? '☀️' : w.label === 'くもり' ? '☁️' : '⛈️',
     });
   }
 
@@ -249,9 +269,28 @@ function SpiCpiBarChart({ evm }) {
               ))}
               <LabelList
                 dataKey="value"
-                position="top"
-                formatter={(v) => (typeof v === 'number' ? v.toFixed(2) : '')}
-                style={{ fontSize: 12, fill: theme.palette.text.primary, fontWeight: 600 }}
+                content={(props) => {
+                  const { x, y, width, height, value, index } = props;
+                  if (typeof value !== 'number') return null;
+                  const cx = Number(x) + Number(width) / 2;
+                  const emoji = rows?.[Number(index)]?.weatherEmoji || '';
+                  const cy = Number(y) + Number(height || 0) / 2 + 4;
+                  return (
+                    <g>
+                      <text x={cx} y={Number(y) - 10} textAnchor="middle" style={{ fontSize: 45 }}>
+                        {emoji}
+                      </text>
+                      <text
+                        x={cx}
+                        y={cy}
+                        textAnchor="middle"
+                        style={{ fontSize: 14, fill: '#fff', fontWeight: 700 }}
+                      >
+                        {value.toFixed(2)}
+                      </text>
+                    </g>
+                  );
+                }}
               />
             </Bar>
           </BarChart>
@@ -716,247 +755,456 @@ export default function ProgressTracking() {
       {sortedRecords.length === 0 ? (
         <Typography color="text.secondary">進捗記録がありません。「+ 新規進捗記録」から追加してください。</Typography>
       ) : (
-        sortedRecords.map(record => {
-          const comments = Array.isArray(record.comments) ? record.comments : [];
-          const evm = calcEVM(record.bac, record.pv, record.ev, record.ac);
-          const isEditing = editingId === record.id;
-          const evalVal = evalEditing[record.id] !== undefined ? evalEditing[record.id] : (record.evaluation || '');
-          const isEvalDirty = evalEditing[record.id] !== undefined && evalEditing[record.id] !== (record.evaluation || '');
-          const evalTaskMeta = record.evaluation_linked_task_id
-            ? taskStatusMeta(record.evaluation_linked_task_id)
-            : null;
+        (() => {
+          const current = sortedRecords[0] || null;
+          const previous = sortedRecords[1] || null;
 
-          return (
-            <Card key={record.id} id={`evm-record-${record.id}`} sx={{ mb: 3, scrollMarginTop: 88 }}>
-              <CardContent>
-                {/* ヘッダー */}
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                  <Typography variant="h6">{record.record_date}</Typography>
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    <Tooltip title="EVMを複製（BAC/PV/EV/AC・評価のみ。コメントは含みません）">
-                      <span>
-                        <IconButton
+          const renderRecordCard = (record, headerLabel) => {
+            if (!record) return null;
+            const comments = Array.isArray(record.comments) ? record.comments : [];
+            const evm = calcEVM(record.bac, record.pv, record.ev, record.ac);
+            const isEditing = editingId === record.id;
+            const evalVal = evalEditing[record.id] !== undefined ? evalEditing[record.id] : (record.evaluation || '');
+            const isEvalDirty = evalEditing[record.id] !== undefined && evalEditing[record.id] !== (record.evaluation || '');
+            const evalTaskMeta = record.evaluation_linked_task_id
+              ? taskStatusMeta(record.evaluation_linked_task_id)
+              : null;
+
+            return (
+              <Card key={record.id} id={`evm-record-${record.id}`} sx={{ mb: 3, scrollMarginTop: 88 }}>
+                <CardContent>
+                  {/* ヘッダー */}
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, flexWrap: 'wrap' }}>
+                      {headerLabel ? (
+                        <Chip
                           size="small"
-                          onClick={() => openDuplicate(record)}
-                          disabled={duplicateSaving}
-                          aria-label="EVMを複製"
-                        >
-                          <ContentCopyIcon fontSize="small" />
-                        </IconButton>
-                      </span>
-                    </Tooltip>
-                    <IconButton color="error" size="small" onClick={() => handleDelete(record.id)}>
-                      <DeleteIcon />
-                    </IconButton>
+                          color={headerLabel === '今回' ? 'primary' : 'default'}
+                          label={headerLabel}
+                          variant={headerLabel === '今回' ? 'filled' : 'outlined'}
+                        />
+                      ) : null}
+                      <Typography variant="h6">{record.record_date}</Typography>
+                    </Box>
+                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                      <Tooltip title="EVMを複製（BAC/PV/EV/AC・評価のみ。コメントは含みません）">
+                        <span>
+                          <IconButton
+                            size="small"
+                            onClick={() => openDuplicate(record)}
+                            disabled={duplicateSaving}
+                            aria-label="EVMを複製"
+                          >
+                            <ContentCopyIcon fontSize="small" />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                      <IconButton color="error" size="small" onClick={() => handleDelete(record.id)}>
+                        <DeleteIcon />
+                      </IconButton>
+                    </Box>
                   </Box>
-                </Box>
 
-                {/* EVM入力 */}
-                <Box sx={{ mb: 2 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                    <Typography variant="subtitle2" color="text.secondary">EVM入力値</Typography>
-                    <Box sx={{ display: 'flex', gap: 1 }}>
-                      {isEditing ? (
-                        <>
-                          <Button size="small" variant="contained" startIcon={<SaveIcon />} onClick={() => handleEditSave(record)}>
+                  {/* EVM入力 */}
+                  <Box sx={{ mb: 2 }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                      <Typography variant="subtitle2" color="text.secondary">EVM入力値</Typography>
+                      <Box sx={{ display: 'flex', gap: 1 }}>
+                        {isEditing ? (
+                          <>
+                            <Button size="small" variant="contained" startIcon={<SaveIcon />} onClick={() => handleEditSave(record)}>
+                              保存
+                            </Button>
+                            <Button size="small" startIcon={<CancelIcon />} onClick={() => setEditingId(null)}>
+                              キャンセル
+                            </Button>
+                          </>
+                        ) : (
+                          <Button size="small" variant="outlined" startIcon={<EditIcon />} onClick={() => handleEditStart(record)}>
+                            編集
+                          </Button>
+                        )}
+                      </Box>
+                    </Box>
+                    <Grid container spacing={2}>
+                      <Grid size={{ xs: 6, sm: 3 }}>
+                        <TextField
+                          label="BAC（完成時予算／Budget at Completion）"
+                          type="number"
+                          size="small"
+                          fullWidth
+                          InputLabelProps={{ shrink: true }}
+                          value={isEditing ? editForm.bac : (record.bac ?? '')}
+                          onChange={e => setEditForm(prev => ({ ...prev, bac: e.target.value }))}
+                          InputProps={{ readOnly: !isEditing }}
+                        />
+                      </Grid>
+                      <Grid item xs={6} sm={3}>
+                        <TextField
+                          label="PV（計画価値／Planned Value）"
+                          type="number"
+                          size="small"
+                          fullWidth
+                          InputLabelProps={{ shrink: true }}
+                          value={isEditing ? editForm.pv : (record.pv ?? '')}
+                          onChange={e => setEditForm(prev => ({ ...prev, pv: e.target.value }))}
+                          InputProps={{ readOnly: !isEditing }}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 6, sm: 3 }}>
+                        <TextField
+                          label="EV（出来高の価値／Earned Value）"
+                          type="number"
+                          size="small"
+                          fullWidth
+                          InputLabelProps={{ shrink: true }}
+                          value={isEditing ? editForm.ev : (record.ev ?? '')}
+                          onChange={e => setEditForm(prev => ({ ...prev, ev: e.target.value }))}
+                          InputProps={{ readOnly: !isEditing }}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 6, sm: 3 }}>
+                        <TextField
+                          label="AC（実績コスト／Actual Cost）"
+                          type="number"
+                          size="small"
+                          fullWidth
+                          InputLabelProps={{ shrink: true }}
+                          helperText="任意（月次などで未入力可）"
+                          FormHelperTextProps={{ sx: { mt: 0.25 } }}
+                          value={isEditing ? editForm.ac : (record.ac ?? '')}
+                          onChange={e => setEditForm(prev => ({ ...prev, ac: e.target.value }))}
+                          InputProps={{ readOnly: !isEditing }}
+                        />
+                      </Grid>
+                    </Grid>
+                  </Box>
+
+                  {/* 参照リンク（URL / ファイルパス） */}
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+                      参照リンク（複数可）
+                    </Typography>
+                    {isEditing ? (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        {(editForm.links || []).map((l) => (
+                          <Box key={l.id} sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+                            <TextField
+                              select
+                              size="small"
+                              label="種類"
+                              value={l.type}
+                              onChange={(e) => updateEditLink(l.id, { type: e.target.value })}
+                              sx={{ width: 130 }}
+                            >
+                              {LINK_TYPE_OPTIONS.map((o) => (
+                                <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>
+                              ))}
+                            </TextField>
+                            <TextField
+                              size="small"
+                              label={l.type === 'url' ? 'URL' : 'ファイルパス'}
+                              value={l.value}
+                              onChange={(e) => updateEditLink(l.id, { value: e.target.value })}
+                              sx={{ minWidth: 280, flex: '1 1 280px' }}
+                            />
+                            <TextField
+                              size="small"
+                              label="表示名（任意）"
+                              value={l.label}
+                              onChange={(e) => updateEditLink(l.id, { label: e.target.value })}
+                              sx={{ minWidth: 180, flex: '1 1 180px' }}
+                            />
+                            <IconButton size="small" color="error" onClick={() => removeEditLink(l.id)}>
+                              <DeleteIcon fontSize="small" />
+                            </IconButton>
+                          </Box>
+                        ))}
+                        <Button size="small" variant="outlined" onClick={addEditLink} sx={{ alignSelf: 'flex-start' }}>
+                          + リンク追加
+                        </Button>
+                      </Box>
+                    ) : (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                        {normalizeLinks(record.links).length === 0 ? (
+                          <Typography variant="body2" color="text.secondary">リンクはありません</Typography>
+                        ) : (
+                          normalizeLinks(record.links).map((l) => (
+                            <Link
+                              key={l.id}
+                              href={toLinkHref(l)}
+                              target="_blank"
+                              rel="noreferrer"
+                              sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75, width: 'fit-content' }}
+                            >
+                              <Chip size="small" variant="outlined" label={l.type === 'url' ? 'URL' : 'FILE'} />
+                              <Typography variant="body2">{l.label || l.value}</Typography>
+                            </Link>
+                          ))
+                        )}
+                      </Box>
+                    )}
+                  </Box>
+
+                  {/* EVM指標（計算値） */}
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>EVM指標</Typography>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                      {(() => {
+                        const w = weatherByIndex(evm.spi);
+                        const Icon = w.icon;
+                        return (
+                          <Chip
+                            icon={<Icon fontSize="small" />}
+                            label={`SPI: ${fmtIdx(evm.spi)}（${w.label}）`}
+                            color={indexColor(evm.spi)}
+                            size="small"
+                          />
+                        );
+                      })()}
+                      {(() => {
+                        const w = weatherByIndex(evm.cpi);
+                        const Icon = w.icon;
+                        return (
+                          <Chip
+                            icon={<Icon fontSize="small" />}
+                            label={`CPI: ${fmtIdx(evm.cpi)}（${w.label}）`}
+                            color={indexColor(evm.cpi)}
+                            size="small"
+                          />
+                        );
+                      })()}
+                      <Chip label={`SV: ${fmt(evm.sv)}`} color={varColor(evm.sv)} size="small" variant="outlined" />
+                      <Chip label={`CV: ${fmt(evm.cv)}`} color={varColor(evm.cv)} size="small" variant="outlined" />
+                      <Chip label={`EAC: ${fmt(evm.eac)}`} color="default" size="small" variant="outlined" />
+                      <Chip label={`ETC: ${fmt(evm.etc)}`} color="default" size="small" variant="outlined" />
+                      <Chip label={`VAC: ${fmt(evm.vac)}`} color={varColor(evm.vac)} size="small" variant="outlined" />
+                    </Box>
+                    <SpiCpiBarChart evm={evm} />
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{
+                        mt: 3,
+                        p: 1.5,
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        whiteSpace: 'pre-line',
+                        lineHeight: 1.65,
+                      }}
+                    >
+                      {summarizeEVM(evm)}
+                    </Typography>
+                  </Box>
+
+                  {/* 評価コメント */}
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>評価コメント</Typography>
+                    <Box id={`evm-eval-${record.id}`} sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', flexWrap: 'wrap', scrollMarginTop: 88 }}>
+                      <TextField
+                        multiline
+                        minRows={2}
+                        fullWidth
+                        size="small"
+                        placeholder="評価コメントを入力..."
+                        value={evalVal}
+                        onChange={e => setEvalEditing(prev => ({ ...prev, [record.id]: e.target.value }))}
+                        sx={{ flex: '1 1 240px', minWidth: 0 }}
+                      />
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, alignItems: 'stretch' }}>
+                        {isEvalDirty && (
+                          <Button variant="contained" size="small" onClick={() => handleEvalSave(record)} sx={{ whiteSpace: 'nowrap' }}>
                             保存
                           </Button>
-                          <Button size="small" startIcon={<CancelIcon />} onClick={() => setEditingId(null)}>
-                            キャンセル
+                        )}
+                        {record.evaluation_linked_task_id ? (
+                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-start' }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                              <Chip
+                                size="small"
+                                label={evalTaskMeta?.label ?? '—'}
+                                color={evalTaskMeta?.color ?? 'default'}
+                                variant="outlined"
+                              />
+                              <Link
+                                component={RouterLink}
+                                to={taskDeepLink(record.evaluation_linked_task_id)}
+                                variant="body2"
+                                sx={{ whiteSpace: 'nowrap' }}
+                              >
+                                作成したタスクを開く
+                              </Link>
+                            </Box>
+                            <Link
+                              component={RouterLink}
+                              to={`/projects/${id}/progress#${progressEvalHash(record.id)}`}
+                              variant="caption"
+                              color="text.secondary"
+                              sx={{ whiteSpace: 'nowrap' }}
+                            >
+                              この評価コメント位置へ
+                            </Link>
+                          </Box>
+                        ) : (
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            startIcon={<PlaylistAddIcon />}
+                            disabled={taskAddInFlight === taskAddKey.eval(record.id) || !String(evalVal || '').trim()}
+                            onClick={() => handleAddEvalAsTask(record)}
+                            sx={{ whiteSpace: 'nowrap' }}
+                          >
+                            評価をタスクに追加
                           </Button>
-                        </>
-                      ) : (
-                        <Button size="small" variant="outlined" startIcon={<EditIcon />} onClick={() => handleEditStart(record)}>
-                          編集
-                        </Button>
-                      )}
+                        )}
+                      </Box>
                     </Box>
                   </Box>
-                  <Grid container spacing={2}>
-                    <Grid item xs={6} sm={3}>
-                      <TextField
-                        label="BAC（完成時予算／Budget at Completion）"
-                        type="number"
-                        size="small"
-                        fullWidth
-                        InputLabelProps={{ shrink: true }}
-                        value={isEditing ? editForm.bac : (record.bac ?? '')}
-                        onChange={e => setEditForm(prev => ({ ...prev, bac: e.target.value }))}
-                        InputProps={{ readOnly: !isEditing }}
-                      />
-                    </Grid>
-                    <Grid item xs={6} sm={3}>
-                      <TextField
-                        label="PV（計画価値／Planned Value）"
-                        type="number"
-                        size="small"
-                        fullWidth
-                        InputLabelProps={{ shrink: true }}
-                        value={isEditing ? editForm.pv : (record.pv ?? '')}
-                        onChange={e => setEditForm(prev => ({ ...prev, pv: e.target.value }))}
-                        InputProps={{ readOnly: !isEditing }}
-                      />
-                    </Grid>
-                    <Grid item xs={6} sm={3}>
-                      <TextField
-                        label="EV（出来高の価値／Earned Value）"
-                        type="number"
-                        size="small"
-                        fullWidth
-                        InputLabelProps={{ shrink: true }}
-                        value={isEditing ? editForm.ev : (record.ev ?? '')}
-                        onChange={e => setEditForm(prev => ({ ...prev, ev: e.target.value }))}
-                        InputProps={{ readOnly: !isEditing }}
-                      />
-                    </Grid>
-                    <Grid item xs={6} sm={3}>
-                      <TextField
-                        label="AC（実績コスト／Actual Cost）"
-                        type="number"
-                        size="small"
-                        fullWidth
-                        InputLabelProps={{ shrink: true }}
-                        helperText="任意（月次などで未入力可）"
-                        FormHelperTextProps={{ sx: { mt: 0.25 } }}
-                        value={isEditing ? editForm.ac : (record.ac ?? '')}
-                        onChange={e => setEditForm(prev => ({ ...prev, ac: e.target.value }))}
-                        InputProps={{ readOnly: !isEditing }}
-                      />
-                    </Grid>
-                  </Grid>
-                </Box>
 
-                {/* 参照リンク（URL / ファイルパス） */}
-                <Box sx={{ mb: 2 }}>
-                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
-                    参照リンク（複数可）
-                  </Typography>
-                  {isEditing ? (
+                  <Divider sx={{ my: 2 }} />
+
+                  {/* コメント */}
+                  <Box>
+                    <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+                      コメント ({comments.length}件)
+                    </Typography>
+                    {comments.length > 0 && (
+                      <List dense disablePadding sx={{ mb: 1 }}>
+                        {comments.map(c => (
+                          <ListItem
+                            key={c.id}
+                            id={progressCommentHash(c.id)}
+                            alignItems="flex-start"
+                            disableGutters
+                            sx={{ pr: 0, scrollMarginTop: 88 }}
+                          >
+                            <ListItemAvatar sx={{ minWidth: 36 }}>
+                              <Avatar sx={{ width: 28, height: 28, fontSize: 12 }}>{c.user_name?.charAt(0)}</Avatar>
+                            </ListItemAvatar>
+                            <ListItemText
+                              primary={
+                                <Box sx={{ display: 'flex', gap: 1, alignItems: 'baseline' }}>
+                                  <Typography variant="caption" fontWeight="bold">{c.user_name}</Typography>
+                                  <Typography variant="caption" color="text.secondary">{formatDate(c.created_at)}</Typography>
+                                </Box>
+                              }
+                              secondary={
+                                <Box>
+                                  <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{c.comment}</Typography>
+                                  <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, mt: 0.75 }}>
+                                    {c.linked_task_id ? (
+                                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, alignItems: 'flex-start' }}>
+                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                                          <Chip
+                                            size="small"
+                                            label={taskStatusMeta(c.linked_task_id).label}
+                                            color={taskStatusMeta(c.linked_task_id).color}
+                                            variant="outlined"
+                                          />
+                                          <Link
+                                            component={RouterLink}
+                                            to={taskDeepLink(c.linked_task_id)}
+                                            variant="body2"
+                                            sx={{ textTransform: 'none' }}
+                                          >
+                                            作成したタスクを開く
+                                          </Link>
+                                        </Box>
+                                        <Link
+                                          component={RouterLink}
+                                          to={`/projects/${id}/progress#${progressCommentHash(c.id)}`}
+                                          variant="caption"
+                                          color="text.secondary"
+                                        >
+                                          このコメント位置へ
+                                        </Link>
+                                      </Box>
+                                    ) : (
+                                      <Button
+                                        variant="text"
+                                        size="small"
+                                        startIcon={<PlaylistAddIcon fontSize="small" />}
+                                        disabled={taskAddInFlight === taskAddKey.comment(c.id)}
+                                        onClick={() => handleAddCommentAsTask(record, c)}
+                                        sx={{ textTransform: 'none', minHeight: 32 }}
+                                      >
+                                        タスクに追加
+                                      </Button>
+                                    )}
+                                    {currentUser && c.user_id === currentUser.id && (
+                                      <Tooltip title="削除">
+                                        <IconButton size="small" onClick={() => handleDeleteComment(record.id, c.id)}>
+                                          <DeleteIcon fontSize="small" sx={{ color: 'error.light' }} />
+                                        </IconButton>
+                                      </Tooltip>
+                                    )}
+                                  </Box>
+                                </Box>
+                              }
+                            />
+                          </ListItem>
+                        ))}
+                      </List>
+                    )}
+
+                    {/* コメント入力 */}
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      {(editForm.links || []).map((l) => (
-                        <Box key={l.id} sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
-                          <TextField
-                            select
-                            size="small"
-                            label="種類"
-                            value={l.type}
-                            onChange={(e) => updateEditLink(l.id, { type: e.target.value })}
-                            sx={{ width: 130 }}
-                          >
-                            {LINK_TYPE_OPTIONS.map((o) => (
-                              <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>
-                            ))}
-                          </TextField>
-                          <TextField
-                            size="small"
-                            label={l.type === 'url' ? 'URL' : 'ファイルパス'}
-                            value={l.value}
-                            onChange={(e) => updateEditLink(l.id, { value: e.target.value })}
-                            sx={{ minWidth: 280, flex: '1 1 280px' }}
-                          />
-                          <TextField
-                            size="small"
-                            label="表示名（任意）"
-                            value={l.label}
-                            onChange={(e) => updateEditLink(l.id, { label: e.target.value })}
-                            sx={{ minWidth: 180, flex: '1 1 180px' }}
-                          />
-                          <IconButton size="small" color="error" onClick={() => removeEditLink(l.id)}>
-                            <DeleteIcon fontSize="small" />
-                          </IconButton>
-                        </Box>
-                      ))}
-                      <Button size="small" variant="outlined" onClick={addEditLink} sx={{ alignSelf: 'flex-start' }}>
-                        + リンク追加
+                      <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-end' }}>
+                        <TextField
+                          size="small"
+                          fullWidth
+                          placeholder="コメントを入力..."
+                          multiline
+                          maxRows={4}
+                          value={commentInput[record.id] || ''}
+                          onChange={e => setCommentInput(prev => ({ ...prev, [record.id]: e.target.value }))}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault();
+                              handleAddComment(record.id);
+                            }
+                          }}
+                        />
+                        <Tooltip title="コメントを投稿">
+                          <span>
+                            <IconButton
+                              color="primary"
+                              onClick={() => handleAddComment(record.id)}
+                              disabled={!(commentInput[record.id] || '').trim()}
+                            >
+                              <SendIcon />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      </Box>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        startIcon={<PlaylistAddIcon />}
+                        disabled={
+                          taskAddInFlight === taskAddKey.draft(record.id) || !(commentInput[record.id] || '').trim()
+                        }
+                        onClick={() => handleAddDraftCommentAsTask(record.id)}
+                        sx={{ alignSelf: 'flex-start', textTransform: 'none' }}
+                      >
+                        入力中の内容をタスクに追加（投稿せず）
                       </Button>
-                    </Box>
-                  ) : (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                      {normalizeLinks(record.links).length === 0 ? (
-                        <Typography variant="body2" color="text.secondary">リンクはありません</Typography>
-                      ) : (
-                        normalizeLinks(record.links).map((l) => (
-                          <Link
-                            key={l.id}
-                            href={toLinkHref(l)}
-                            target="_blank"
-                            rel="noreferrer"
-                            sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75, width: 'fit-content' }}
-                          >
-                            <Chip size="small" variant="outlined" label={l.type === 'url' ? 'URL' : 'FILE'} />
-                            <Typography variant="body2">{l.label || l.value}</Typography>
-                          </Link>
-                        ))
-                      )}
-                    </Box>
-                  )}
-                </Box>
-
-                {/* EVM指標（計算値） */}
-                <Box sx={{ mb: 2 }}>
-                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>EVM指標</Typography>
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                    <Chip label={`SPI: ${fmtIdx(evm.spi)}`} color={indexColor(evm.spi)} size="small" />
-                    <Chip label={`CPI: ${fmtIdx(evm.cpi)}`} color={indexColor(evm.cpi)} size="small" />
-                    <Chip label={`SV: ${fmt(evm.sv)}`} color={varColor(evm.sv)} size="small" variant="outlined" />
-                    <Chip label={`CV: ${fmt(evm.cv)}`} color={varColor(evm.cv)} size="small" variant="outlined" />
-                    <Chip label={`EAC: ${fmt(evm.eac)}`} color="default" size="small" variant="outlined" />
-                    <Chip label={`ETC: ${fmt(evm.etc)}`} color="default" size="small" variant="outlined" />
-                    <Chip label={`VAC: ${fmt(evm.vac)}`} color={varColor(evm.vac)} size="small" variant="outlined" />
-                  </Box>
-                  <SpiCpiBarChart evm={evm} />
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    sx={{
-                      mt: 3,
-                      p: 1.5,
-                      bgcolor: 'action.hover',
-                      borderRadius: 1,
-                      whiteSpace: 'pre-line',
-                      lineHeight: 1.65,
-                    }}
-                  >
-                    {summarizeEVM(evm)}
-                  </Typography>
-                </Box>
-
-                {/* 評価コメント */}
-                <Box sx={{ mb: 2 }}>
-                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>評価コメント</Typography>
-                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                    <TextField
-                      multiline
-                      minRows={2}
-                      fullWidth
-                      size="small"
-                      placeholder="評価コメントを入力..."
-                      value={evalVal}
-                      onChange={e => setEvalEditing(prev => ({ ...prev, [record.id]: e.target.value }))}
-                      sx={{ flex: '1 1 240px', minWidth: 0 }}
-                    />
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, alignItems: 'stretch' }}>
-                      {isEvalDirty && (
-                        <Button variant="contained" size="small" onClick={() => handleEvalSave(record)} sx={{ whiteSpace: 'nowrap' }}>
-                          保存
-                        </Button>
-                      )}
-                      {record.evaluation_linked_task_id ? (
-                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-start' }}>
+                      {lastDraftTaskByRecord[record.id] ? (
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, alignItems: 'flex-start' }}>
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
                             <Chip
                               size="small"
-                              label={evalTaskMeta?.label ?? '—'}
-                              color={evalTaskMeta?.color ?? 'default'}
+                              label={taskStatusMeta(lastDraftTaskByRecord[record.id]).label}
+                              color={taskStatusMeta(lastDraftTaskByRecord[record.id]).color}
                               variant="outlined"
                             />
                             <Link
                               component={RouterLink}
-                              to={taskDeepLink(record.evaluation_linked_task_id)}
-                              variant="body2"
-                              sx={{ whiteSpace: 'nowrap' }}
+                              to={taskDeepLink(lastDraftTaskByRecord[record.id])}
+                              variant="caption"
+                              sx={{ alignSelf: 'flex-start' }}
                             >
-                              作成したタスクを開く
+                              直近に作成したタスクを開く
                             </Link>
                           </Box>
                           <Link
@@ -964,189 +1212,44 @@ export default function ProgressTracking() {
                             to={`/projects/${id}/progress#${progressEvalHash(record.id)}`}
                             variant="caption"
                             color="text.secondary"
-                            sx={{ whiteSpace: 'nowrap' }}
                           >
-                            この評価コメント位置へ
+                            この進捗記録へ
                           </Link>
                         </Box>
-                      ) : (
-                        <Button
-                          variant="outlined"
-                          size="small"
-                          startIcon={<PlaylistAddIcon />}
-                          disabled={taskAddInFlight === taskAddKey.eval(record.id) || !String(evalVal || '').trim()}
-                          onClick={() => handleAddEvalAsTask(record)}
-                          sx={{ whiteSpace: 'nowrap' }}
-                        >
-                          評価をタスクに追加
-                        </Button>
-                      )}
+                      ) : null}
                     </Box>
                   </Box>
-                </Box>
+                </CardContent>
+              </Card>
+            );
+          };
 
-                <Divider sx={{ my: 2 }} />
+          return (
+            <Box>
+              {previous && current ? (
+                <Grid container spacing={2} alignItems="flex-start">
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    {renderRecordCard(previous, '前回')}
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    {renderRecordCard(current, '今回')}
+                  </Grid>
+                </Grid>
+              ) : (
+                renderRecordCard(current || previous, '')
+              )}
 
-                {/* コメント */}
-                <Box>
+              {sortedRecords.length > 2 ? (
+                <Box sx={{ mt: 1 }}>
                   <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
-                    コメント ({comments.length}件)
+                    過去の記録
                   </Typography>
-                  {comments.length > 0 && (
-                    <List dense disablePadding sx={{ mb: 1 }}>
-                      {comments.map(c => (
-                        <ListItem
-                          key={c.id}
-                          id={progressCommentHash(c.id)}
-                          alignItems="flex-start"
-                          disableGutters
-                          sx={{ pr: 0, scrollMarginTop: 88 }}
-                        >
-                          <ListItemAvatar sx={{ minWidth: 36 }}>
-                            <Avatar sx={{ width: 28, height: 28, fontSize: 12 }}>{c.user_name?.charAt(0)}</Avatar>
-                          </ListItemAvatar>
-                          <ListItemText
-                            primary={
-                              <Box sx={{ display: 'flex', gap: 1, alignItems: 'baseline' }}>
-                                <Typography variant="caption" fontWeight="bold">{c.user_name}</Typography>
-                                <Typography variant="caption" color="text.secondary">{formatDate(c.created_at)}</Typography>
-                              </Box>
-                            }
-                            secondary={
-                              <Box>
-                                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{c.comment}</Typography>
-                                <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, mt: 0.75 }}>
-                                  {c.linked_task_id ? (
-                                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, alignItems: 'flex-start' }}>
-                                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                                        <Chip
-                                          size="small"
-                                          label={taskStatusMeta(c.linked_task_id).label}
-                                          color={taskStatusMeta(c.linked_task_id).color}
-                                          variant="outlined"
-                                        />
-                                        <Link
-                                          component={RouterLink}
-                                          to={taskDeepLink(c.linked_task_id)}
-                                          variant="body2"
-                                          sx={{ textTransform: 'none' }}
-                                        >
-                                          作成したタスクを開く
-                                        </Link>
-                                      </Box>
-                                      <Link
-                                        component={RouterLink}
-                                        to={`/projects/${id}/progress#${progressCommentHash(c.id)}`}
-                                        variant="caption"
-                                        color="text.secondary"
-                                      >
-                                        このコメント位置へ
-                                      </Link>
-                                    </Box>
-                                  ) : (
-                                    <Button
-                                      variant="text"
-                                      size="small"
-                                      startIcon={<PlaylistAddIcon fontSize="small" />}
-                                      disabled={taskAddInFlight === taskAddKey.comment(c.id)}
-                                      onClick={() => handleAddCommentAsTask(record, c)}
-                                      sx={{ textTransform: 'none', minHeight: 32 }}
-                                    >
-                                      タスクに追加
-                                    </Button>
-                                  )}
-                                  {currentUser && c.user_id === currentUser.id && (
-                                    <Tooltip title="削除">
-                                      <IconButton size="small" onClick={() => handleDeleteComment(record.id, c.id)}>
-                                        <DeleteIcon fontSize="small" sx={{ color: 'error.light' }} />
-                                      </IconButton>
-                                    </Tooltip>
-                                  )}
-                                </Box>
-                              </Box>
-                            }
-                          />
-                        </ListItem>
-                      ))}
-                    </List>
-                  )}
-
-                  {/* コメント入力 */}
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-end' }}>
-                      <TextField
-                        size="small"
-                        fullWidth
-                        placeholder="コメントを入力..."
-                        multiline
-                        maxRows={4}
-                        value={commentInput[record.id] || ''}
-                        onChange={e => setCommentInput(prev => ({ ...prev, [record.id]: e.target.value }))}
-                        onKeyDown={e => {
-                          if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            handleAddComment(record.id);
-                          }
-                        }}
-                      />
-                      <Tooltip title="コメントを投稿">
-                        <span>
-                          <IconButton
-                            color="primary"
-                            onClick={() => handleAddComment(record.id)}
-                            disabled={!(commentInput[record.id] || '').trim()}
-                          >
-                            <SendIcon />
-                          </IconButton>
-                        </span>
-                      </Tooltip>
-                    </Box>
-                    <Button
-                      variant="outlined"
-                      size="small"
-                      startIcon={<PlaylistAddIcon />}
-                      disabled={
-                        taskAddInFlight === taskAddKey.draft(record.id) || !(commentInput[record.id] || '').trim()
-                      }
-                      onClick={() => handleAddDraftCommentAsTask(record.id)}
-                      sx={{ alignSelf: 'flex-start', textTransform: 'none' }}
-                    >
-                      入力中の内容をタスクに追加（投稿せず）
-                    </Button>
-                    {lastDraftTaskByRecord[record.id] ? (
-                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, alignItems: 'flex-start' }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                          <Chip
-                            size="small"
-                            label={taskStatusMeta(lastDraftTaskByRecord[record.id]).label}
-                            color={taskStatusMeta(lastDraftTaskByRecord[record.id]).color}
-                            variant="outlined"
-                          />
-                          <Link
-                            component={RouterLink}
-                            to={taskDeepLink(lastDraftTaskByRecord[record.id])}
-                            variant="caption"
-                            sx={{ alignSelf: 'flex-start' }}
-                          >
-                            直近に作成したタスクを開く
-                          </Link>
-                        </Box>
-                        <Link
-                          component={RouterLink}
-                          to={`/projects/${id}/progress#${progressEvalHash(record.id)}`}
-                          variant="caption"
-                          color="text.secondary"
-                        >
-                          この進捗記録へ
-                        </Link>
-                      </Box>
-                    ) : null}
-                  </Box>
+                  {sortedRecords.slice(2).map((r) => renderRecordCard(r, ''))}
                 </Box>
-              </CardContent>
-            </Card>
+              ) : null}
+            </Box>
           );
-        })
+        })()
       )}
 
       <Dialog open={Boolean(duplicateSource)} onClose={closeDuplicate} maxWidth="xs" fullWidth>
@@ -1206,7 +1309,7 @@ export default function ProgressTracking() {
             InputLabelProps={{ shrink: true }}
           />
           <Grid container spacing={2}>
-            <Grid item xs={6}>
+            <Grid size={{ xs: 6 }}>
               <TextField
                 label="BAC（完成時予算／Budget at Completion）"
                 type="number"
@@ -1217,7 +1320,7 @@ export default function ProgressTracking() {
                 InputLabelProps={{ shrink: true }}
               />
             </Grid>
-            <Grid item xs={6}>
+            <Grid size={{ xs: 6 }}>
               <TextField
                 label="PV（計画価値／Planned Value）"
                 type="number"
@@ -1228,7 +1331,7 @@ export default function ProgressTracking() {
                 InputLabelProps={{ shrink: true }}
               />
             </Grid>
-            <Grid item xs={6}>
+            <Grid size={{ xs: 6 }}>
               <TextField
                 label="EV（出来高の価値／Earned Value）"
                 type="number"
@@ -1239,7 +1342,7 @@ export default function ProgressTracking() {
                 InputLabelProps={{ shrink: true }}
               />
             </Grid>
-            <Grid item xs={6}>
+            <Grid size={{ xs: 6 }}>
               <TextField
                 label="AC（実績コスト／Actual Cost）"
                 type="number"

@@ -21,6 +21,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import PersonIcon from '@mui/icons-material/Person';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { projectsApi, tasksApi, customFieldsApi, taskCommentsApi, membersApi } from '../api';
 
 const TASK_STATUS = [
@@ -43,9 +44,23 @@ const FIELD_TYPES = [
   { value: 'number', label: '数値' },
   { value: 'date', label: '日付' },
   { value: 'checkbox', label: 'チェック' },
+  { value: 'link', label: 'リンク' },
 ];
 
 const EMPTY_FIELD = { field_key: '', field_type: 'text', field_value: '' };
+
+/** http(s) のみ。それ以外は null（javascript: 等を弾く） */
+function safeExternalHref(raw) {
+  const s = String(raw || '').trim();
+  if (!/^https?:\/\//i.test(s)) return null;
+  try {
+    const u = new URL(s);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    return u.href;
+  } catch {
+    return null;
+  }
+}
 
 function FieldValueInput({ type, value, onChange, size = 'small' }) {
   if (type === 'checkbox') {
@@ -54,6 +69,35 @@ function FieldValueInput({ type, value, onChange, size = 'small' }) {
         control={<Checkbox checked={value === 'true'} onChange={e => onChange(e.target.checked ? 'true' : 'false')} size={size} />}
         label={value === 'true' ? 'ON' : 'OFF'}
       />
+    );
+  }
+  if (type === 'link') {
+    const href = safeExternalHref(value);
+    return (
+      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.5, width: '100%' }}>
+        <TextField
+          type="url"
+          value={value || ''}
+          onChange={e => onChange(e.target.value)}
+          size={size}
+          fullWidth
+          placeholder="https://example.com/..."
+        />
+        {href ? (
+          <Tooltip title="新しいタブで開く">
+            <IconButton
+              size={size}
+              component="a"
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              sx={{ flexShrink: 0, mt: size === 'small' ? 0.5 : 1 }}
+            >
+              <OpenInNewIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        ) : null}
+      </Box>
     );
   }
   return (
