@@ -20,6 +20,7 @@ import SendIcon from '@mui/icons-material/Send';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import PersonIcon from '@mui/icons-material/Person';
+import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import { projectsApi, tasksApi, customFieldsApi, taskCommentsApi, membersApi } from '../api';
 
 const TASK_STATUS = [
@@ -67,10 +68,15 @@ function FieldValueInput({ type, value, onChange, size = 'small' }) {
   );
 }
 
+function taskStatusLabel(value) {
+  return TASK_STATUS.find((s) => s.value === value)?.label || value || '—';
+}
+
 function TaskCommentPanel({ task, currentUser, onTaskUpdated, members }) {
   const [comments, setComments] = useState([]);
   const [input, setInput] = useState('');
   const [assignee, setAssignee] = useState(task.assignee || '');
+  const [status, setStatus] = useState(task.status || 'todo');
   const [loading, setLoading] = useState(false);
 
   const loadComments = () => {
@@ -80,10 +86,12 @@ function TaskCommentPanel({ task, currentUser, onTaskUpdated, members }) {
   useEffect(() => {
     loadComments();
     setAssignee(task.assignee || '');
-  }, [task.id, task.assignee]);
+    setStatus(task.status || 'todo');
+  }, [task.id, task.assignee, task.status]);
 
   const assigneeChanged = assignee !== (task.assignee || '');
-  const canSend = input.trim() || assigneeChanged;
+  const statusChanged = status !== (task.status || 'todo');
+  const canSend = input.trim() || assigneeChanged || statusChanged;
 
   const handleSend = async () => {
     if (!canSend) return;
@@ -93,10 +101,12 @@ function TaskCommentPanel({ task, currentUser, onTaskUpdated, members }) {
         comment: input.trim() || undefined,
         new_assignee: assigneeChanged ? assignee : undefined,
         old_assignee: assigneeChanged ? (task.assignee || '') : undefined,
+        // 常に送り、サーバーが DB の現在値と比較して tasks.status を更新する
+        new_status: status,
       });
       setInput('');
       loadComments();
-      if (assigneeChanged && onTaskUpdated) onTaskUpdated();
+      if (onTaskUpdated) onTaskUpdated();
     } finally {
       setLoading(false);
     }
@@ -160,6 +170,39 @@ function TaskCommentPanel({ task, currentUser, onTaskUpdated, members }) {
                 </ListItem>
               );
             }
+            if (c.comment_type === 'status_change') {
+              return (
+                <ListItem key={c.id} disableGutters sx={{ py: 0.3 }}>
+                  <ListItemAvatar sx={{ minWidth: 32 }}>
+                    <Avatar sx={{ width: 24, height: 24, bgcolor: 'secondary.light' }}>
+                      <SwapHorizIcon sx={{ fontSize: 14 }} />
+                    </Avatar>
+                  </ListItemAvatar>
+                  <ListItemText
+                    primary={
+                      <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <Typography variant="caption" fontWeight="bold">{c.user_name}</Typography>
+                        <Typography variant="caption" color="text.secondary">がステータスを変更:</Typography>
+                        <Chip
+                          label={taskStatusLabel(c.old_status)}
+                          size="small"
+                          variant="outlined"
+                          sx={{ height: 18, fontSize: 11 }}
+                        />
+                        <Typography variant="caption" color="text.secondary">→</Typography>
+                        <Chip
+                          label={taskStatusLabel(c.new_status)}
+                          size="small"
+                          color={TASK_STATUS_COLORS[c.new_status] || 'default'}
+                          sx={{ height: 18, fontSize: 11 }}
+                        />
+                        <Typography variant="caption" color="text.secondary" sx={{ ml: 0.5 }}>{formatDate(c.created_at)}</Typography>
+                      </Box>
+                    }
+                  />
+                </ListItem>
+              );
+            }
             return (
               <ListItem key={c.id} alignItems="flex-start" disableGutters
                 secondaryAction={
@@ -190,7 +233,7 @@ function TaskCommentPanel({ task, currentUser, onTaskUpdated, members }) {
 
       {/* 入力エリア */}
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
           <PersonIcon fontSize="small" color="action" />
           <Typography variant="caption" color="text.secondary" sx={{ minWidth: 50 }}>担当者:</Typography>
           <TextField
@@ -209,6 +252,24 @@ function TaskCommentPanel({ task, currentUser, onTaskUpdated, members }) {
             <Typography variant="caption" color="warning.dark">変更あり</Typography>
           )}
         </Box>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+          <SwapHorizIcon fontSize="small" color="action" />
+          <Typography variant="caption" color="text.secondary" sx={{ minWidth: 50 }}>ステータス:</Typography>
+          <TextField
+            select
+            size="small"
+            value={status}
+            onChange={e => setStatus(e.target.value)}
+            sx={{ width: 180, ...(statusChanged ? { '& fieldset': { borderColor: 'warning.main' } } : {}) }}
+          >
+            {TASK_STATUS.map(o => (
+              <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>
+            ))}
+          </TextField>
+          {statusChanged && (
+            <Typography variant="caption" color="warning.dark">変更あり</Typography>
+          )}
+        </Box>
         <Box sx={{ display: 'flex', gap: 1 }}>
           <TextField
             size="small"
@@ -220,7 +281,13 @@ function TaskCommentPanel({ task, currentUser, onTaskUpdated, members }) {
             multiline
             maxRows={4}
           />
-          <Tooltip title={assigneeChanged && !input.trim() ? '担当者変更を保存' : 'コメントを投稿'}>
+          <Tooltip
+            title={
+              !input.trim() && (assigneeChanged || statusChanged)
+                ? '担当者・ステータス変更を保存'
+                : 'コメントを投稿'
+            }
+          >
             <span>
               <IconButton color="primary" onClick={handleSend} disabled={loading || !canSend}>
                 <SendIcon />

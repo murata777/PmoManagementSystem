@@ -72,6 +72,8 @@ export const progressApi = {
   create: (projectId, data) => api.post(`/projects/${projectId}/progress`, data),
   update: (projectId, recordId, data) => api.put(`/projects/${projectId}/progress/${recordId}`, data),
   delete: (projectId, recordId) => api.delete(`/projects/${projectId}/progress/${recordId}`),
+  duplicate: (projectId, recordId, body) =>
+    api.post(`/projects/${projectId}/progress/${recordId}/duplicate`, body || {}),
   addComment: (projectId, recordId, comment) => api.post(`/projects/${projectId}/progress/${recordId}/comments`, { comment }),
   deleteComment: (projectId, recordId, commentId) => api.delete(`/projects/${projectId}/progress/${recordId}/comments/${commentId}`),
   addCommentAsTask: (projectId, recordId, commentId) =>

@@ -25,6 +25,36 @@ function toNumericOrNull(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function normalizeProgressLinks(rawLinks) {
+  let source = rawLinks;
+  if (typeof source === 'string') {
+    try {
+      source = JSON.parse(source);
+    } catch {
+      source = [];
+    }
+  }
+  if (!Array.isArray(source)) return [];
+  const out = [];
+  for (const item of source) {
+    if (!item || typeof item !== 'object') continue;
+    const type = item.type === 'file' ? 'file' : item.type === 'url' ? 'url' : null;
+    const value = item.value != null ? String(item.value).trim() : '';
+    if (!type || !value) continue;
+    out.push({
+      id: item.id ? String(item.id) : uuidv4(),
+      type,
+      value,
+      label: item.label != null ? String(item.label).trim() : '',
+    });
+  }
+  return out;
+}
+
+function withNormalizedLinks(row) {
+  return { ...row, links: normalizeProgressLinks(row?.links) };
+}
+
 // GET / - 全進捗記録 (record_date ASC, comments含む)
 router.get('/', async (req, res) => {
   try {
@@ -56,6 +86,7 @@ router.get('/', async (req, res) => {
 
     const result = records.map(r => ({
       ...r,
+      links: normalizeProgressLinks(r.links),
       comments: commentsMap[r.id] || [],
     }));
 
@@ -68,7 +99,7 @@ router.get('/', async (req, res) => {
 // POST / - 進捗記録作成
 router.post('/', async (req, res) => {
   const { projectId } = req.params;
-  const { record_date, bac, pv, ev, ac, evaluation } = req.body;
+  const { record_date, bac, pv, ev, ac, evaluation, links } = req.body;
   if (!record_date || !String(record_date).trim()) {
     return res.status(400).json({ error: 'record_date は必須です' });
   }
@@ -78,9 +109,10 @@ router.post('/', async (req, res) => {
 
   try {
     const id = uuidv4();
+    const normalizedLinks = normalizeProgressLinks(links);
     const { rows } = await pool.query(
-      `INSERT INTO progress_records (id, project_id, record_date, bac, pv, ev, ac, evaluation, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO progress_records (id, project_id, record_date, bac, pv, ev, ac, evaluation, created_by, links)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
        RETURNING *`,
       [id, projectId, String(record_date).trim(),
         toNumericOrNull(bac),
@@ -88,9 +120,10 @@ router.post('/', async (req, res) => {
         toNumericOrNull(ev),
         toNumericOrNull(ac),
         evaluation != null && String(evaluation).trim() !== '' ? String(evaluation) : null,
-        req.user.id]
+        req.user.id,
+        JSON.stringify(normalizedLinks)]
     );
-    res.status(201).json({ ...rows[0], comments: [] });
+    res.status(201).json({ ...withNormalizedLinks(rows[0]), comments: [] });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -99,12 +132,13 @@ router.post('/', async (req, res) => {
 // PUT /:recordId - 進捗記録更新
 router.put('/:recordId', async (req, res) => {
   const { projectId, recordId } = req.params;
-  const { record_date, bac, pv, ev, ac, evaluation } = req.body;
+  const { record_date, bac, pv, ev, ac, evaluation, links } = req.body;
 
   try {
     if (!(await canAccess(req.user.id, projectId))) {
       return res.status(403).json({ error: 'アクセス権限がありません' });
     }
+    const normalizedLinks = links !== undefined ? normalizeProgressLinks(links) : null;
     const { rows } = await pool.query(
       `UPDATE progress_records
        SET record_date = COALESCE($1, record_date),
@@ -113,6 +147,7 @@ router.put('/:recordId', async (req, res) => {
            ev = $4,
            ac = $5,
            evaluation = $6,
+           links = COALESCE($9::jsonb, links),
            updated_at = NOW()
        WHERE id = $7 AND project_id = $8
        RETURNING *`,
@@ -123,10 +158,11 @@ router.put('/:recordId', async (req, res) => {
         toNumericOrNull(ac),
         evaluation !== undefined ? (evaluation != null && String(evaluation).trim() !== '' ? String(evaluation) : null) : null,
         recordId,
-        projectId]
+        projectId,
+        normalizedLinks !== null ? JSON.stringify(normalizedLinks) : null]
     );
     if (rows.length === 0) return res.status(404).json({ error: '記録が見つかりません' });
-    res.json(rows[0]);
+    res.json(withNormalizedLinks(rows[0]));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -145,6 +181,49 @@ router.delete('/:recordId', async (req, res) => {
     );
     if (rowCount === 0) return res.status(404).json({ error: '記録が見つかりません' });
     res.json({ message: '削除しました' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /:recordId/duplicate — EVM（BAC/PV/EV/AC・評価コメント）のみ複製。タイムライン・タスク紐付けは含まない
+router.post('/:recordId/duplicate', async (req, res) => {
+  const { projectId, recordId } = req.params;
+  const { record_date: bodyRecordDate } = req.body || {};
+  try {
+    if (!(await canAccess(req.user.id, projectId))) {
+      return res.status(403).json({ error: 'アクセス権限がありません' });
+    }
+    const { rows } = await pool.query(
+      `SELECT record_date, bac, pv, ev, ac, evaluation, links
+       FROM progress_records WHERE id = $1 AND project_id = $2`,
+      [recordId, projectId]
+    );
+    if (!rows[0]) return res.status(404).json({ error: '記録が見つかりません' });
+    const src = rows[0];
+    const newId = uuidv4();
+    const newDate =
+      bodyRecordDate != null && String(bodyRecordDate).trim() !== ''
+        ? String(bodyRecordDate).trim()
+        : src.record_date;
+    const { rows: inserted } = await pool.query(
+      `INSERT INTO progress_records (id, project_id, record_date, bac, pv, ev, ac, evaluation, created_by, links)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+       RETURNING *`,
+      [
+        newId,
+        projectId,
+        newDate,
+        src.bac,
+        src.pv,
+        src.ev,
+        src.ac,
+        src.evaluation,
+        req.user.id,
+        JSON.stringify(normalizeProgressLinks(src.links)),
+      ]
+    );
+    res.status(201).json({ ...withNormalizedLinks(inserted[0]), comments: [] });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

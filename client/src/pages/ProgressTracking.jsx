@@ -3,7 +3,7 @@ import { useParams, useNavigate, useLocation, Link as RouterLink } from 'react-r
 import {
   Box, Typography, Button, Card, CardContent, TextField, IconButton,
   Dialog, DialogTitle, DialogContent, DialogActions, Divider, Chip,
-  Avatar, List, ListItem, ListItemAvatar, ListItemText, Tooltip,
+  Avatar, List, ListItem, ListItemAvatar, ListItemText, Tooltip, MenuItem,
   Alert, Snackbar, Breadcrumbs, Link, Grid, useTheme
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
@@ -14,12 +14,58 @@ import SaveIcon from '@mui/icons-material/Save';
 import CancelIcon from '@mui/icons-material/Cancel';
 import SendIcon from '@mui/icons-material/Send';
 import PlaylistAddIcon from '@mui/icons-material/PlaylistAdd';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip as ReTooltip, Legend, ReferenceLine, ResponsiveContainer,
   BarChart, Bar, Cell, LabelList
 } from 'recharts';
 import { projectsApi, progressApi, tasksApi } from '../api';
+
+const TASK_STATUS = [
+  { value: 'todo', label: '未着手' },
+  { value: 'inprogress', label: '進行中' },
+  { value: 'review', label: 'レビュー中' },
+  { value: 'done', label: '完了' },
+];
+const TASK_STATUS_COLORS = { todo: 'default', inprogress: 'info', review: 'warning', done: 'success' };
+const LINK_TYPE_OPTIONS = [
+  { value: 'url', label: 'URL' },
+  { value: 'file', label: 'ファイルパス' },
+];
+const emptyLink = () => ({ id: `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, type: 'url', value: '', label: '' });
+
+const normalizeLinks = (links) => {
+  let source = links;
+  if (typeof source === 'string') {
+    try {
+      source = JSON.parse(source);
+    } catch {
+      source = [];
+    }
+  }
+  return (Array.isArray(source) ? source : []).map((l) => ({
+    id: l?.id || `tmp-${Math.random().toString(36).slice(2, 7)}`,
+    type: l?.type === 'file' ? 'file' : 'url',
+    value: String(l?.value || ''),
+    label: String(l?.label || ''),
+  }));
+};
+
+const sanitizeLinksForSave = (links) =>
+  normalizeLinks(links)
+    .map((l) => ({ ...l, value: l.value.trim(), label: l.label.trim() }))
+    .filter((l) => l.value !== '');
+
+const toLinkHref = (item) => {
+  if (!item?.value) return '#';
+  if (item.type === 'url') {
+    const v = String(item.value).trim();
+    return /^https?:\/\//i.test(v) ? v : `https://${v}`;
+  }
+  const normalized = String(item.value).replace(/\\/g, '/');
+  return `file:///${normalized}`;
+};
 
 const formatDate = (dt) => {
   if (!dt) return '';
@@ -30,12 +76,12 @@ const formatDate = (dt) => {
   return `${jst.getUTCFullYear()}/${pad(jst.getUTCMonth()+1)}/${pad(jst.getUTCDate())} ${pad(jst.getUTCHours())}:${pad(jst.getUTCMinutes())}`;
 };
 
-/** タスク追加APIの失敗理由（404 で JSON が無いときは接続・プロキシを示唆） */
-const formatTaskAddError = (e) => {
+/** 進捗／タスク系 API の失敗理由（404 で JSON が無いときは接続・ルーティング・プロキシを示唆） */
+const formatProgressApiError = (e) => {
   const d = e.response?.data;
   if (d && typeof d === 'object' && typeof d.error === 'string' && d.error) return d.error;
   if (e.response?.status === 404) {
-    return 'APIが見つかりません。バックエンド（npm run server、既定ポート5000）が起動しているか、Vite の proxy / preview.proxy を確認してください。';
+    return 'APIが見つかりません。APIサーバーを再起動し、npm run dev でプロキシが有効か確認してください。';
   }
   return e.message || '不明なエラー';
 };
@@ -229,17 +275,26 @@ export default function ProgressTracking() {
 
   const [project, setProject] = useState(null);
   const [records, setRecords] = useState([]);
+  const [tasks, setTasks] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
 
   // 新規追加ダイアログ
   const [addOpen, setAddOpen] = useState(false);
-  const [addForm, setAddForm] = useState({ record_date: '', bac: '', pv: '', ev: '', ac: '', evaluation: '' });
+  const [addForm, setAddForm] = useState({
+    record_date: '', bac: '', pv: '', ev: '', ac: '', evaluation: '', links: [emptyLink()],
+  });
   const [addSaving, setAddSaving] = useState(false);
   const [addError, setAddError] = useState('');
 
+  // EVM 複製ダイアログ
+  const [duplicateSource, setDuplicateSource] = useState(null);
+  const [duplicateDate, setDuplicateDate] = useState('');
+  const [duplicateSaving, setDuplicateSaving] = useState(false);
+  const [duplicateError, setDuplicateError] = useState('');
+
   // 編集状態
   const [editingId, setEditingId] = useState(null);
-  const [editForm, setEditForm] = useState({ bac: '', pv: '', ev: '', ac: '' });
+  const [editForm, setEditForm] = useState({ bac: '', pv: '', ev: '', ac: '', links: [] });
 
   // 評価コメント編集
   const [evalEditing, setEvalEditing] = useState({});
@@ -248,7 +303,7 @@ export default function ProgressTracking() {
   const [commentInput, setCommentInput] = useState({});
 
   // タスク追加フィードバック（成功・失敗・警告）
-  const [snack, setSnack] = useState({ message: '', severity: 'success', taskLinkId: null });
+  const [snack, setSnack] = useState({ message: '', severity: 'success', taskLinkId: null, taskStatus: null });
   /** 進行中の「タスクに追加」操作（コメント／評価／下書きごと。全体で1つにしない） */
   const [taskAddInFlight, setTaskAddInFlight] = useState(null);
   /** 下書きから直近作成したタスクID（再追加を阻害しない） */
@@ -265,12 +320,42 @@ export default function ProgressTracking() {
     if (u) try { setCurrentUser(JSON.parse(u)); } catch {}
   }, []);
 
-  const loadProject = () => {
-    projectsApi.getById(id).then(res => {
-      const { tasks: _t, ...p } = res.data;
+  const loadProject = () =>
+    projectsApi.getById(id).then((res) => {
+      const { tasks: t = [], ...p } = res.data;
       setProject(p);
+      setTasks(t);
+      return t;
     });
+
+  const taskStatusMeta = (taskId) => {
+    const t = tasks.find((x) => x.id === taskId);
+    if (!t) return { label: '—', color: 'default' };
+    return {
+      label: TASK_STATUS.find((s) => s.value === t.status)?.label || t.status,
+      color: TASK_STATUS_COLORS[t.status] || 'default',
+    };
   };
+
+  const updateEditLink = (linkId, patch) => {
+    setEditForm((prev) => ({
+      ...prev,
+      links: (prev.links || []).map((l) => (l.id === linkId ? { ...l, ...patch } : l)),
+    }));
+  };
+  const addEditLink = () => setEditForm((prev) => ({ ...prev, links: [...(prev.links || []), emptyLink()] }));
+  const removeEditLink = (linkId) =>
+    setEditForm((prev) => ({ ...prev, links: (prev.links || []).filter((l) => l.id !== linkId) }));
+
+  const updateAddLink = (linkId, patch) => {
+    setAddForm((prev) => ({
+      ...prev,
+      links: (prev.links || []).map((l) => (l.id === linkId ? { ...l, ...patch } : l)),
+    }));
+  };
+  const addAddLink = () => setAddForm((prev) => ({ ...prev, links: [...(prev.links || []), emptyLink()] }));
+  const removeAddLink = (linkId) =>
+    setAddForm((prev) => ({ ...prev, links: (prev.links || []).filter((l) => l.id !== linkId) }));
 
   const loadRecords = () =>
     progressApi
@@ -312,9 +397,10 @@ export default function ProgressTracking() {
         ev: addForm.ev,
         ac: addForm.ac,
         evaluation: addForm.evaluation,
+        links: sanitizeLinksForSave(addForm.links),
       });
       setAddOpen(false);
-      setAddForm({ record_date: '', bac: '', pv: '', ev: '', ac: '', evaluation: '' });
+      setAddForm({ record_date: '', bac: '', pv: '', ev: '', ac: '', evaluation: '', links: [emptyLink()] });
       loadRecords();
     } catch (e) {
       const msg = e.response?.data?.error || e.message || '保存に失敗しました';
@@ -331,10 +417,48 @@ export default function ProgressTracking() {
     loadRecords();
   };
 
+  const openDuplicate = (record) => {
+    if (duplicateSaving) return;
+    setDuplicateError('');
+    setDuplicateSource(record);
+    setDuplicateDate(record.record_date || '');
+  };
+
+  const closeDuplicate = () => {
+    if (duplicateSaving) return;
+    setDuplicateSource(null);
+    setDuplicateError('');
+  };
+
+  const handleDuplicateConfirm = async () => {
+    if (!duplicateSource || !duplicateDate.trim()) {
+      setDuplicateError('記録日を入力してください');
+      return;
+    }
+    setDuplicateSaving(true);
+    setDuplicateError('');
+    try {
+      await progressApi.duplicate(id, duplicateSource.id, { record_date: duplicateDate.trim() });
+      await loadRecords();
+      setSnack({ message: 'EVMを複製しました', severity: 'success', taskLinkId: null, taskStatus: null });
+      setDuplicateSource(null);
+    } catch (e) {
+      setDuplicateError(formatProgressApiError(e));
+    } finally {
+      setDuplicateSaving(false);
+    }
+  };
+
   // EVM値編集開始
   const handleEditStart = (record) => {
     setEditingId(record.id);
-    setEditForm({ bac: record.bac ?? '', pv: record.pv ?? '', ev: record.ev ?? '', ac: record.ac ?? '' });
+    setEditForm({
+      bac: record.bac ?? '',
+      pv: record.pv ?? '',
+      ev: record.ev ?? '',
+      ac: record.ac ?? '',
+      links: normalizeLinks(record.links),
+    });
   };
 
   // EVM値保存
@@ -346,6 +470,7 @@ export default function ProgressTracking() {
       ev: editForm.ev,
       ac: editForm.ac,
       evaluation: record.evaluation,
+      links: sanitizeLinksForSave(editForm.links),
     });
     setEditingId(null);
     loadRecords();
@@ -389,24 +514,33 @@ export default function ProgressTracking() {
     setTaskAddInFlight(k);
     try {
       const res = await progressApi.addCommentAsTask(id, record.id, comment.id);
-      await loadRecords();
+      await Promise.all([loadRecords(), loadProject()]);
       const tid = res.data?.task?.id;
       setSnack({
         message: 'タスクに追加しました',
         severity: 'success',
         taskLinkId: tid || null,
+        taskStatus: res.data?.task?.status || null,
       });
     } catch (e) {
       if (e.response?.status === 409) {
         await loadRecords();
+        const tList = await loadProject();
         const tid = e.response?.data?.task_id || null;
+        const st = tid ? tList?.find((x) => x.id === tid)?.status : null;
         setSnack({
           message: e.response?.data?.error || '既にタスクに追加済みです',
           severity: 'warning',
           taskLinkId: tid,
+          taskStatus: st || null,
         });
       } else {
-        setSnack({ message: `タスクの追加に失敗しました: ${formatTaskAddError(e)}`, severity: 'error', taskLinkId: null });
+        setSnack({
+          message: `タスクの追加に失敗しました: ${formatProgressApiError(e)}`,
+          severity: 'error',
+          taskLinkId: null,
+          taskStatus: null,
+        });
       }
     } finally {
       setTaskAddInFlight((cur) => (cur === k ? null : cur));
@@ -421,30 +555,39 @@ export default function ProgressTracking() {
       evalEditing[record.id] !== undefined ? evalEditing[record.id] : (record.evaluation || '')
     ).trim();
     if (!evaluation) {
-      setSnack({ message: '評価コメントを入力してください', severity: 'warning', taskLinkId: null });
+      setSnack({ message: '評価コメントを入力してください', severity: 'warning', taskLinkId: null, taskStatus: null });
       return;
     }
     setTaskAddInFlight(k);
     try {
       const res = await progressApi.addEvaluationAsTask(id, record.id, { evaluation });
-      await loadRecords();
+      await Promise.all([loadRecords(), loadProject()]);
       const tid = res.data?.task?.id;
       setSnack({
         message: 'タスクに追加しました',
         severity: 'success',
         taskLinkId: tid || null,
+        taskStatus: res.data?.task?.status || null,
       });
     } catch (e) {
       if (e.response?.status === 409) {
         await loadRecords();
+        const tList = await loadProject();
         const tid = e.response?.data?.task_id || null;
+        const st = tid ? tList?.find((x) => x.id === tid)?.status : null;
         setSnack({
           message: e.response?.data?.error || '既にタスクに追加済みです',
           severity: 'warning',
           taskLinkId: tid,
+          taskStatus: st || null,
         });
       } else {
-        setSnack({ message: `タスクの追加に失敗しました: ${formatTaskAddError(e)}`, severity: 'error', taskLinkId: null });
+        setSnack({
+          message: `タスクの追加に失敗しました: ${formatProgressApiError(e)}`,
+          severity: 'error',
+          taskLinkId: null,
+          taskStatus: null,
+        });
       }
     } finally {
       setTaskAddInFlight((cur) => (cur === k ? null : cur));
@@ -456,7 +599,7 @@ export default function ProgressTracking() {
     if (taskAddInFlight === k) return;
     const text = (commentInput[recordId] || '').trim();
     if (!text) {
-      setSnack({ message: '内容が空のためタスクに追加できません', severity: 'warning', taskLinkId: null });
+      setSnack({ message: '内容が空のためタスクに追加できません', severity: 'warning', taskLinkId: null, taskStatus: null });
       return;
     }
     const safeTitle = text.length > 500 ? `${text.slice(0, 497)}…` : text;
@@ -471,13 +614,20 @@ export default function ProgressTracking() {
         progress_record_id: recordId,
       });
       setLastDraftTaskByRecord((prev) => ({ ...prev, [recordId]: res.data.id }));
+      await loadProject();
       setSnack({
         message: 'タスクに追加しました（投稿せず）',
         severity: 'success',
         taskLinkId: res.data.id,
+        taskStatus: res.data.status || null,
       });
     } catch (e) {
-      setSnack({ message: `タスクの追加に失敗しました: ${formatTaskAddError(e)}`, severity: 'error', taskLinkId: null });
+      setSnack({
+        message: `タスクの追加に失敗しました: ${formatProgressApiError(e)}`,
+        severity: 'error',
+        taskLinkId: null,
+        taskStatus: null,
+      });
     } finally {
       setTaskAddInFlight((cur) => (cur === k ? null : cur));
     }
@@ -572,6 +722,9 @@ export default function ProgressTracking() {
           const isEditing = editingId === record.id;
           const evalVal = evalEditing[record.id] !== undefined ? evalEditing[record.id] : (record.evaluation || '');
           const isEvalDirty = evalEditing[record.id] !== undefined && evalEditing[record.id] !== (record.evaluation || '');
+          const evalTaskMeta = record.evaluation_linked_task_id
+            ? taskStatusMeta(record.evaluation_linked_task_id)
+            : null;
 
           return (
             <Card key={record.id} id={`evm-record-${record.id}`} sx={{ mb: 3, scrollMarginTop: 88 }}>
@@ -579,9 +732,23 @@ export default function ProgressTracking() {
                 {/* ヘッダー */}
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                   <Typography variant="h6">{record.record_date}</Typography>
-                  <IconButton color="error" size="small" onClick={() => handleDelete(record.id)}>
-                    <DeleteIcon />
-                  </IconButton>
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <Tooltip title="EVMを複製（BAC/PV/EV/AC・評価のみ。コメントは含みません）">
+                      <span>
+                        <IconButton
+                          size="small"
+                          onClick={() => openDuplicate(record)}
+                          disabled={duplicateSaving}
+                          aria-label="EVMを複製"
+                        >
+                          <ContentCopyIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                    <IconButton color="error" size="small" onClick={() => handleDelete(record.id)}>
+                      <DeleteIcon />
+                    </IconButton>
+                  </Box>
                 </Box>
 
                 {/* EVM入力 */}
@@ -659,6 +826,72 @@ export default function ProgressTracking() {
                   </Grid>
                 </Box>
 
+                {/* 参照リンク（URL / ファイルパス） */}
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+                    参照リンク（複数可）
+                  </Typography>
+                  {isEditing ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {(editForm.links || []).map((l) => (
+                        <Box key={l.id} sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+                          <TextField
+                            select
+                            size="small"
+                            label="種類"
+                            value={l.type}
+                            onChange={(e) => updateEditLink(l.id, { type: e.target.value })}
+                            sx={{ width: 130 }}
+                          >
+                            {LINK_TYPE_OPTIONS.map((o) => (
+                              <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>
+                            ))}
+                          </TextField>
+                          <TextField
+                            size="small"
+                            label={l.type === 'url' ? 'URL' : 'ファイルパス'}
+                            value={l.value}
+                            onChange={(e) => updateEditLink(l.id, { value: e.target.value })}
+                            sx={{ minWidth: 280, flex: '1 1 280px' }}
+                          />
+                          <TextField
+                            size="small"
+                            label="表示名（任意）"
+                            value={l.label}
+                            onChange={(e) => updateEditLink(l.id, { label: e.target.value })}
+                            sx={{ minWidth: 180, flex: '1 1 180px' }}
+                          />
+                          <IconButton size="small" color="error" onClick={() => removeEditLink(l.id)}>
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Box>
+                      ))}
+                      <Button size="small" variant="outlined" onClick={addEditLink} sx={{ alignSelf: 'flex-start' }}>
+                        + リンク追加
+                      </Button>
+                    </Box>
+                  ) : (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                      {normalizeLinks(record.links).length === 0 ? (
+                        <Typography variant="body2" color="text.secondary">リンクはありません</Typography>
+                      ) : (
+                        normalizeLinks(record.links).map((l) => (
+                          <Link
+                            key={l.id}
+                            href={toLinkHref(l)}
+                            target="_blank"
+                            rel="noreferrer"
+                            sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75, width: 'fit-content' }}
+                          >
+                            <Chip size="small" variant="outlined" label={l.type === 'url' ? 'URL' : 'FILE'} />
+                            <Typography variant="body2">{l.label || l.value}</Typography>
+                          </Link>
+                        ))
+                      )}
+                    </Box>
+                  )}
+                </Box>
+
                 {/* EVM指標（計算値） */}
                 <Box sx={{ mb: 2 }}>
                   <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>EVM指標</Typography>
@@ -710,14 +943,22 @@ export default function ProgressTracking() {
                       )}
                       {record.evaluation_linked_task_id ? (
                         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-start' }}>
-                          <Link
-                            component={RouterLink}
-                            to={taskDeepLink(record.evaluation_linked_task_id)}
-                            variant="body2"
-                            sx={{ whiteSpace: 'nowrap' }}
-                          >
-                            作成したタスクを開く
-                          </Link>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                            <Chip
+                              size="small"
+                              label={evalTaskMeta?.label ?? '—'}
+                              color={evalTaskMeta?.color ?? 'default'}
+                              variant="outlined"
+                            />
+                            <Link
+                              component={RouterLink}
+                              to={taskDeepLink(record.evaluation_linked_task_id)}
+                              variant="body2"
+                              sx={{ whiteSpace: 'nowrap' }}
+                            >
+                              作成したタスクを開く
+                            </Link>
+                          </Box>
                           <Link
                             component={RouterLink}
                             to={`/projects/${id}/progress#${progressEvalHash(record.id)}`}
@@ -777,14 +1018,22 @@ export default function ProgressTracking() {
                                 <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, mt: 0.75 }}>
                                   {c.linked_task_id ? (
                                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, alignItems: 'flex-start' }}>
-                                      <Link
-                                        component={RouterLink}
-                                        to={taskDeepLink(c.linked_task_id)}
-                                        variant="body2"
-                                        sx={{ textTransform: 'none' }}
-                                      >
-                                        作成したタスクを開く
-                                      </Link>
+                                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                                        <Chip
+                                          size="small"
+                                          label={taskStatusMeta(c.linked_task_id).label}
+                                          color={taskStatusMeta(c.linked_task_id).color}
+                                          variant="outlined"
+                                        />
+                                        <Link
+                                          component={RouterLink}
+                                          to={taskDeepLink(c.linked_task_id)}
+                                          variant="body2"
+                                          sx={{ textTransform: 'none' }}
+                                        >
+                                          作成したタスクを開く
+                                        </Link>
+                                      </Box>
                                       <Link
                                         component={RouterLink}
                                         to={`/projects/${id}/progress#${progressCommentHash(c.id)}`}
@@ -866,14 +1115,22 @@ export default function ProgressTracking() {
                     </Button>
                     {lastDraftTaskByRecord[record.id] ? (
                       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, alignItems: 'flex-start' }}>
-                        <Link
-                          component={RouterLink}
-                          to={taskDeepLink(lastDraftTaskByRecord[record.id])}
-                          variant="caption"
-                          sx={{ alignSelf: 'flex-start' }}
-                        >
-                          直近に作成したタスクを開く
-                        </Link>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                          <Chip
+                            size="small"
+                            label={taskStatusMeta(lastDraftTaskByRecord[record.id]).label}
+                            color={taskStatusMeta(lastDraftTaskByRecord[record.id]).color}
+                            variant="outlined"
+                          />
+                          <Link
+                            component={RouterLink}
+                            to={taskDeepLink(lastDraftTaskByRecord[record.id])}
+                            variant="caption"
+                            sx={{ alignSelf: 'flex-start' }}
+                          >
+                            直近に作成したタスクを開く
+                          </Link>
+                        </Box>
                         <Link
                           component={RouterLink}
                           to={`/projects/${id}/progress#${progressEvalHash(record.id)}`}
@@ -891,6 +1148,40 @@ export default function ProgressTracking() {
           );
         })
       )}
+
+      <Dialog open={Boolean(duplicateSource)} onClose={closeDuplicate} maxWidth="xs" fullWidth>
+        <DialogTitle>EVMの複製</DialogTitle>
+        <DialogContent sx={{ pt: 2 }}>
+          {duplicateError ? (
+            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setDuplicateError('')}>
+              {duplicateError}
+            </Alert>
+          ) : null}
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            BAC・PV・EV・AC・評価コメントをコピーして新しい進捗記録を追加します。タイムラインのコメントとタスクへの紐付けは含みません。
+          </Typography>
+          <TextField
+            label="新しい記録日 *"
+            type="date"
+            value={duplicateDate}
+            onChange={(e) => setDuplicateDate(e.target.value)}
+            fullWidth
+            InputLabelProps={{ shrink: true }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeDuplicate} disabled={duplicateSaving}>
+            キャンセル
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleDuplicateConfirm}
+            disabled={!duplicateDate.trim() || duplicateSaving}
+          >
+            {duplicateSaving ? '複製中…' : '複製'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* 新規追加ダイアログ */}
       <Dialog
@@ -971,6 +1262,45 @@ export default function ProgressTracking() {
             fullWidth
             placeholder="この時点での評価・コメントを入力..."
           />
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <Typography variant="subtitle2" color="text.secondary">参照リンク（URL / ファイルパス、複数可）</Typography>
+            {(addForm.links || []).map((l) => (
+              <Box key={l.id} sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+                <TextField
+                  select
+                  size="small"
+                  label="種類"
+                  value={l.type}
+                  onChange={(e) => updateAddLink(l.id, { type: e.target.value })}
+                  sx={{ width: 130 }}
+                >
+                  {LINK_TYPE_OPTIONS.map((o) => (
+                    <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>
+                  ))}
+                </TextField>
+                <TextField
+                  size="small"
+                  label={l.type === 'url' ? 'URL' : 'ファイルパス'}
+                  value={l.value}
+                  onChange={(e) => updateAddLink(l.id, { value: e.target.value })}
+                  sx={{ minWidth: 280, flex: '1 1 280px' }}
+                />
+                <TextField
+                  size="small"
+                  label="表示名（任意）"
+                  value={l.label}
+                  onChange={(e) => updateAddLink(l.id, { label: e.target.value })}
+                  sx={{ minWidth: 180, flex: '1 1 180px' }}
+                />
+                <IconButton size="small" color="error" onClick={() => removeAddLink(l.id)}>
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
+              </Box>
+            ))}
+            <Button size="small" variant="outlined" onClick={addAddLink} sx={{ alignSelf: 'flex-start' }}>
+              + リンク追加
+            </Button>
+          </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => !addSaving && setAddOpen(false)} disabled={addSaving}>
@@ -989,11 +1319,11 @@ export default function ProgressTracking() {
       <Snackbar
         open={Boolean(snack.message)}
         autoHideDuration={snack.severity === 'error' ? 5000 : 2800}
-        onClose={() => setSnack({ message: '', severity: 'success', taskLinkId: null })}
+        onClose={() => setSnack({ message: '', severity: 'success', taskLinkId: null, taskStatus: null })}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       >
         <Alert
-          onClose={() => setSnack({ message: '', severity: 'success', taskLinkId: null })}
+          onClose={() => setSnack({ message: '', severity: 'success', taskLinkId: null, taskStatus: null })}
           severity={snack.severity}
           variant="filled"
           sx={{ width: '100%' }}
@@ -1001,14 +1331,29 @@ export default function ProgressTracking() {
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-start' }}>
             <span>{snack.message}</span>
             {snack.taskLinkId ? (
-              <Link
-                component={RouterLink}
-                to={`/projects/${id}#task-${snack.taskLinkId}`}
-                color="inherit"
-                sx={{ fontWeight: 600, textDecoration: 'underline' }}
-              >
-                作成したタスクを開く
-              </Link>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                {snack.taskStatus ? (
+                  <Chip
+                    size="small"
+                    label={TASK_STATUS.find((s) => s.value === snack.taskStatus)?.label || snack.taskStatus}
+                    sx={{
+                      height: 22,
+                      fontSize: '0.75rem',
+                      bgcolor: 'rgba(255,255,255,0.22)',
+                      color: 'inherit',
+                      border: '1px solid rgba(255,255,255,0.45)',
+                    }}
+                  />
+                ) : null}
+                <Link
+                  component={RouterLink}
+                  to={`/projects/${id}#task-${snack.taskLinkId}`}
+                  color="inherit"
+                  sx={{ fontWeight: 600, textDecoration: 'underline' }}
+                >
+                  作成したタスクを開く
+                </Link>
+              </Box>
             ) : null}
           </Box>
         </Alert>

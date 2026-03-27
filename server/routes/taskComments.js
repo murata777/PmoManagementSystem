@@ -3,6 +3,8 @@ const router = express.Router({ mergeParams: true });
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
 
+const ALLOWED_TASK_STATUS = new Set(['todo', 'inprogress', 'review', 'done']);
+
 // GET all comments/logs for a task (chronological)
 router.get('/', async (req, res) => {
   try {
@@ -20,19 +22,38 @@ router.get('/', async (req, res) => {
   }
 });
 
-// POST add a comment and/or assignee change
+// POST add a comment and/or assignee change and/or status change（タスクの status は DB 上の現在値と new_status を比較して更新）
 router.post('/', async (req, res) => {
-  const { comment, new_assignee, old_assignee } = req.body;
+  const { comment, new_assignee, old_assignee, new_status } = req.body;
   const hasComment = comment && comment.trim();
   const assigneeChanged = new_assignee !== undefined && new_assignee !== old_assignee;
 
-  if (!hasComment && !assigneeChanged) {
-    return res.status(400).json({ error: 'コメントまたは担当者変更が必要です' });
+  if (new_status !== undefined && !ALLOWED_TASK_STATUS.has(String(new_status))) {
+    return res.status(400).json({ error: '不正なステータスです' });
   }
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const { rows: taskRows } = await client.query(
+      'SELECT status FROM tasks WHERE id = $1 FOR UPDATE',
+      [req.params.taskId]
+    );
+    if (!taskRows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'タスクが見つかりません' });
+    }
+    const dbStatus = taskRows[0].status || 'todo';
+    const statusDbUpdate =
+      new_status !== undefined &&
+      ALLOWED_TASK_STATUS.has(String(new_status)) &&
+      String(new_status) !== String(dbStatus);
+
+    if (!hasComment && !assigneeChanged && !statusDbUpdate) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'コメント・担当者変更・ステータス変更のいずれかが必要です' });
+    }
+
     const inserted = [];
 
     if (hasComment) {
@@ -53,10 +74,23 @@ router.post('/', async (req, res) => {
         [id, req.params.taskId, req.user.id, '', old_assignee || null, new_assignee || null]
       );
       inserted.push(rows[0].id);
-      // タスクの担当者を更新
       await client.query(
         'UPDATE tasks SET assignee=$1, updated_at=NOW() WHERE id=$2',
         [new_assignee || null, req.params.taskId]
+      );
+    }
+
+    if (statusDbUpdate) {
+      const id = uuidv4();
+      const { rows } = await client.query(
+        `INSERT INTO task_comments (id, task_id, user_id, comment, comment_type, old_status, new_status)
+         VALUES ($1,$2,$3,'','status_change',$4,$5) RETURNING *`,
+        [id, req.params.taskId, req.user.id, dbStatus, new_status]
+      );
+      inserted.push(rows[0].id);
+      await client.query(
+        'UPDATE tasks SET status=$1, updated_at=NOW() WHERE id=$2',
+        [new_status, req.params.taskId]
       );
     }
 

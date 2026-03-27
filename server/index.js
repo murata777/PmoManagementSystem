@@ -10,14 +10,15 @@ app.use(cors());
 app.use(express.json());
 
 app.use('/api/auth', require('./routes/auth'));
+// /api/projects より長いパスを先に登録しないと、/projects/:id/progress/... が projects ルーターに吸われ 404 になる
+app.use('/api/projects/:projectId/fields', authMiddleware, require('./routes/customFields'));
+app.use('/api/projects/:projectId/phase-gates', authMiddleware, require('./routes/phaseGates'));
+app.use('/api/projects/:projectId/progress', authMiddleware, require('./routes/progress'));
 app.use('/api/projects', authMiddleware, require('./routes/projects'));
 app.use('/api/tasks', authMiddleware, require('./routes/tasks'));
 app.use('/api/members', authMiddleware, require('./routes/members'));
 app.use('/api/groups', authMiddleware, require('./routes/groups'));
-app.use('/api/projects/:projectId/fields', authMiddleware, require('./routes/customFields'));
 app.use('/api/tasks/:taskId/comments', authMiddleware, require('./routes/taskComments'));
-app.use('/api/projects/:projectId/phase-gates', authMiddleware, require('./routes/phaseGates'));
-app.use('/api/projects/:projectId/progress', authMiddleware, require('./routes/progress'));
 
 app.get('/api/dashboard', authMiddleware, async (req, res) => {
   try {
