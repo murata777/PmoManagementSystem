@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState, useMemo } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Box, Typography, Button, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, Paper, Chip, IconButton, Dialog, DialogTitle,
   DialogContent, DialogActions, TextField, MenuItem,
-  Divider, Alert, Tooltip
+  Divider, Alert, Tooltip, Grid,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -41,6 +41,42 @@ const projectToForm = (p) => ({
 });
 const EMPTY_MEMBER_FORM = { name: '', email: '', role: '', department: '' };
 
+const GROUP_FILTER_NONE = '__none__';
+
+function normalizeSearch(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function matchesProjectSearch(p, qRaw) {
+  const q = normalizeSearch(qRaw);
+  if (!q) return true;
+  const terms = q.split(' ').filter(Boolean);
+  if (terms.length === 0) return true;
+  const statusLabel = STATUS_OPTIONS.find((s) => s.value === p.status)?.label || p.status || '';
+  const priorityLabel = PRIORITY_OPTIONS.find((s) => s.value === p.priority)?.label || p.priority || '';
+  const blob = normalizeSearch(
+    [
+      p.name,
+      p.description,
+      p.manager,
+      p.status,
+      statusLabel,
+      p.priority,
+      priorityLabel,
+      p.group_name,
+      p.start_date,
+      p.end_date,
+      p.evm_as_of,
+      fmtEvmIndex(p.evm_spi),
+      fmtEvmIndex(p.evm_cpi),
+    ].join(' ')
+  );
+  return terms.every((t) => blob.includes(t));
+}
+
 export default function Projects() {
   const [projects, setProjects] = useState([]);
   const [groups, setGroups] = useState([]);
@@ -61,6 +97,67 @@ export default function Projects() {
   const [dupSaving, setDupSaving] = useState(false);
   const [dupError, setDupError] = useState('');
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  const [searchText, setSearchText] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [filterPriority, setFilterPriority] = useState('');
+  const [filterGroupId, setFilterGroupId] = useState('');
+  const [filterManager, setFilterManager] = useState('');
+  const [filterEndFrom, setFilterEndFrom] = useState('');
+  const [filterEndTo, setFilterEndTo] = useState('');
+
+  useEffect(() => {
+    const st = searchParams.get('status');
+    if (st && STATUS_OPTIONS.some((o) => o.value === st)) {
+      setFilterStatus(st);
+    }
+  }, [searchParams]);
+
+  const managerOptions = useMemo(() => {
+    const set = new Set();
+    projects.forEach((p) => {
+      const m = String(p.manager || '').trim();
+      if (m) set.add(m);
+    });
+    return [...set].sort((a, b) => a.localeCompare(b, 'ja'));
+  }, [projects]);
+
+  const sortedGroups = useMemo(
+    () => [...groups].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja')),
+    [groups]
+  );
+
+  const filteredProjects = useMemo(() => {
+    const hasEndFilter = Boolean(filterEndFrom || filterEndTo);
+    return projects.filter((p) => {
+      if (filterStatus && p.status !== filterStatus) return false;
+      if (filterPriority && p.priority !== filterPriority) return false;
+      if (filterGroupId === GROUP_FILTER_NONE) {
+        if (p.group_id) return false;
+      } else if (filterGroupId && (p.group_id || '') !== filterGroupId) {
+        return false;
+      }
+      if (filterManager && String(p.manager || '').trim() !== filterManager) return false;
+      if (hasEndFilter) {
+        const d = p.end_date ? String(p.end_date).slice(0, 10) : '';
+        if (!d) return false;
+        if (filterEndFrom && d < filterEndFrom) return false;
+        if (filterEndTo && d > filterEndTo) return false;
+      }
+      if (!matchesProjectSearch(p, searchText)) return false;
+      return true;
+    });
+  }, [
+    projects,
+    filterStatus,
+    filterPriority,
+    filterGroupId,
+    filterManager,
+    filterEndFrom,
+    filterEndTo,
+    searchText,
+  ]);
 
   const load = () => projectsApi.getAll().then(res => setProjects(res.data));
   const loadGroups = () => groupsApi.getAll().then(res => setGroups(res.data));
@@ -173,6 +270,114 @@ export default function Projects() {
         <Button variant="contained" startIcon={<AddIcon />} onClick={() => handleOpen()}>新規作成</Button>
       </Box>
 
+      <Paper sx={{ p: 2, mb: 2 }}>
+        <Grid container spacing={2}>
+          <Grid size={{ xs: 12 }}>
+            <TextField
+              label="キーワード検索（名前・説明・担当PM・ステータス・優先度・グループ・期間・EVM）"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              fullWidth
+              size="small"
+              placeholder="複数語は空白区切り（すべて含む行のみ表示）"
+            />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+            <TextField
+              select
+              label="ステータス"
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              fullWidth
+              size="small"
+            >
+              <MenuItem value="">すべて</MenuItem>
+              {STATUS_OPTIONS.map((s) => (
+                <MenuItem key={s.value} value={s.value}>
+                  {s.label}
+                </MenuItem>
+              ))}
+            </TextField>
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+            <TextField
+              select
+              label="優先度"
+              value={filterPriority}
+              onChange={(e) => setFilterPriority(e.target.value)}
+              fullWidth
+              size="small"
+            >
+              <MenuItem value="">すべて</MenuItem>
+              {PRIORITY_OPTIONS.map((s) => (
+                <MenuItem key={s.value} value={s.value}>
+                  {s.label}
+                </MenuItem>
+              ))}
+            </TextField>
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+            <TextField
+              select
+              label="グループ"
+              value={filterGroupId}
+              onChange={(e) => setFilterGroupId(e.target.value)}
+              fullWidth
+              size="small"
+            >
+              <MenuItem value="">すべて</MenuItem>
+              <MenuItem value={GROUP_FILTER_NONE}>グループ未設定（全員アクセス可）</MenuItem>
+              {sortedGroups.map((g) => (
+                <MenuItem key={g.id} value={g.id}>
+                  {g.name}
+                </MenuItem>
+              ))}
+            </TextField>
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+            <TextField
+              select
+              label="担当PM"
+              value={filterManager}
+              onChange={(e) => setFilterManager(e.target.value)}
+              fullWidth
+              size="small"
+            >
+              <MenuItem value="">すべて</MenuItem>
+              {managerOptions.map((m) => (
+                <MenuItem key={m} value={m}>
+                  {m}
+                </MenuItem>
+              ))}
+            </TextField>
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, md: 3 }} sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+            <TextField
+              label="終了日（から）"
+              type="date"
+              value={filterEndFrom}
+              onChange={(e) => setFilterEndFrom(e.target.value)}
+              size="small"
+              InputLabelProps={{ shrink: true }}
+              sx={{ flex: '1 1 140px', minWidth: 140 }}
+            />
+            <TextField
+              label="終了日（まで）"
+              type="date"
+              value={filterEndTo}
+              onChange={(e) => setFilterEndTo(e.target.value)}
+              size="small"
+              InputLabelProps={{ shrink: true }}
+              sx={{ flex: '1 1 140px', minWidth: 140 }}
+            />
+          </Grid>
+        </Grid>
+      </Paper>
+
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+        {filteredProjects.length} 件表示（全 {projects.length} 件）
+      </Typography>
+
       <TableContainer component={Paper}>
         <Table>
           <TableHead>
@@ -188,7 +393,7 @@ export default function Projects() {
             </TableRow>
           </TableHead>
           <TableBody>
-            {projects.map(p => (
+            {filteredProjects.map(p => (
               <TableRow key={p.id} hover sx={{ cursor: 'pointer' }} onClick={() => navigate(`/projects/${p.id}`)}>
                 <TableCell><Typography fontWeight="bold">{p.name}</Typography></TableCell>
                 <TableCell>
@@ -243,6 +448,13 @@ export default function Projects() {
             ))}
             {projects.length === 0 && (
               <TableRow><TableCell colSpan={8} align="center">プロジェクトがありません（アクセス可能なプロジェクトがありません）</TableCell></TableRow>
+            )}
+            {projects.length > 0 && filteredProjects.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={8} align="center">
+                  条件に一致するプロジェクトがありません。
+                </TableCell>
+              </TableRow>
             )}
           </TableBody>
         </Table>

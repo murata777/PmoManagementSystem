@@ -1,8 +1,23 @@
 import { useEffect, useState } from 'react';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
-import { Grid, Card, CardContent, Typography, Box, CircularProgress } from '@mui/material';
-import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import {
+  Grid,
+  Card,
+  CardContent,
+  Typography,
+  Box,
+  CircularProgress,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemText,
+  Divider,
+  Link,
+  Tooltip,
+} from '@mui/material';
+import { PieChart, Pie, Cell, Tooltip as ReTooltip, Legend, ResponsiveContainer } from 'recharts';
 import { dashboardApi } from '../api';
+import { getActivityNavTo, getActivityLinkLabel, parseDetail } from '../utils/activityNavigation';
 
 const STATUS_COLORS = {
   planning: '#2196f3',
@@ -17,6 +32,19 @@ const STATUS_LABELS = {
   onhold: '保留',
   completed: '完了',
 };
+
+function formatActivityWhen(iso) {
+  if (!iso) return '';
+  const s = String(iso).replace(' ', 'T');
+  const d = new Date(/Z|[+-]\d{2}:?\d{2}$/.test(s) ? s : `${s}Z`);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('ja-JP', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
 
 function StatCard({ title, value, color, to }) {
   const content = (
@@ -93,6 +121,77 @@ export default function Dashboard() {
         </Grid>
       </Grid>
 
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Typography variant="h6" gutterBottom>
+            最近の操作
+          </Typography>
+          <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+            直近5件です。行をクリックすると関連画面へ移動します（ログインなどリンクのないものは除く）。一覧は
+            <Link component={RouterLink} to="/activity-history" underline="hover">
+              操作履歴
+            </Link>
+            から確認できます。
+          </Typography>
+          {Array.isArray(stats.recentActivity) && stats.recentActivity.length > 0 ? (
+            <List dense disablePadding>
+              {stats.recentActivity.map((a, i) => {
+                const to = getActivityNavTo(a);
+                const linkLabel = getActivityLinkLabel(a);
+                const det = parseDetail(a.detail);
+                const evalPreview = det?.evaluation_preview;
+                const secondary = `${formatActivityWhen(a.created_at)}${a.user_name ? ` · ${a.user_name}` : ''}`;
+                const primaryContent = (
+                  <>
+                    {a.summary}
+                    {evalPreview ? (
+                      <Typography component="span" variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5, whiteSpace: 'pre-wrap' }}>
+                        {evalPreview}
+                      </Typography>
+                    ) : null}
+                  </>
+                );
+                return (
+                  <Box key={a.id || i}>
+                    {i > 0 ? <Divider component="li" /> : null}
+                    {to ? (
+                      <Tooltip title={linkLabel} placement="left" enterDelay={400}>
+                        <ListItemButton
+                          component={RouterLink}
+                          to={to}
+                          alignItems="flex-start"
+                          sx={{ py: 1, px: 0, borderRadius: 1 }}
+                        >
+                          <ListItemText
+                            primary={primaryContent}
+                            secondary={secondary}
+                            primaryTypographyProps={{ variant: 'body2' }}
+                            secondaryTypographyProps={{ variant: 'caption' }}
+                          />
+                        </ListItemButton>
+                      </Tooltip>
+                    ) : (
+                      <ListItem alignItems="flex-start" sx={{ py: 1, px: 0 }}>
+                        <ListItemText
+                          primary={primaryContent}
+                          secondary={secondary}
+                          primaryTypographyProps={{ variant: 'body2' }}
+                          secondaryTypographyProps={{ variant: 'caption' }}
+                        />
+                      </ListItem>
+                    )}
+                  </Box>
+                );
+              })}
+            </List>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              まだ操作履歴がありません。
+            </Typography>
+          )}
+        </CardContent>
+      </Card>
+
       {pieData.length > 0 && (
         <Card>
           <CardContent>
@@ -120,7 +219,7 @@ export default function Dashboard() {
                     <Cell key={index} fill={entry.color} />
                   ))}
                 </Pie>
-                <Tooltip />
+                <ReTooltip />
                 <Legend />
               </PieChart>
             </ResponsiveContainer>

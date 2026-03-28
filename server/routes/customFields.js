@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router({ mergeParams: true });
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
+const { logActivity } = require('../utils/activityLog');
 
 const VALID_TYPES = ['text', 'number', 'date', 'checkbox', 'link'];
 
@@ -32,6 +33,14 @@ router.post('/', async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
       [id, req.params.projectId, field_key, field_type || 'text', field_value ?? null, sort_order ?? 0]
     );
+    const { rows: pr } = await pool.query('SELECT name FROM projects WHERE id = $1', [req.params.projectId]);
+    await logActivity(req.user.id, {
+      action: 'create',
+      targetType: 'custom_field',
+      targetId: id,
+      summary: `プロジェクト「${pr[0]?.name || ''}」にカスタム項目「${field_key}」を追加しました`,
+      detail: { project_id: req.params.projectId },
+    });
     res.status(201).json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -62,11 +71,23 @@ router.put('/:fieldId', async (req, res) => {
 // DELETE a custom field
 router.delete('/:fieldId', async (req, res) => {
   try {
+    const { rows: fr } = await pool.query(
+      'SELECT field_key FROM project_custom_fields WHERE id=$1 AND project_id=$2',
+      [req.params.fieldId, req.params.projectId]
+    );
     const { rowCount } = await pool.query(
       'DELETE FROM project_custom_fields WHERE id=$1 AND project_id=$2',
       [req.params.fieldId, req.params.projectId]
     );
     if (rowCount === 0) return res.status(404).json({ error: '項目が見つかりません' });
+    const { rows: pr } = await pool.query('SELECT name FROM projects WHERE id = $1', [req.params.projectId]);
+    await logActivity(req.user.id, {
+      action: 'delete',
+      targetType: 'custom_field',
+      targetId: req.params.fieldId,
+      summary: `プロジェクト「${pr[0]?.name || ''}」のカスタム項目「${fr[0]?.field_key || ''}」を削除しました`,
+      detail: { project_id: req.params.projectId },
+    });
     res.json({ message: '削除しました' });
   } catch (err) {
     res.status(500).json({ error: err.message });

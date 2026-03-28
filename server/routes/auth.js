@@ -7,6 +7,7 @@ const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
 const { sendInitialPassword } = require('../mailer');
 const authMiddleware = require('../middleware/auth');
+const { logActivity } = require('../utils/activityLog');
 
 function generateTempPassword(length = 10) {
   const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
@@ -65,6 +66,12 @@ router.post('/login', async (req, res) => {
       { expiresIn: process.env.JWT_EXPIRES_IN }
     );
 
+    await logActivity(user.id, {
+      action: 'login',
+      targetType: 'session',
+      summary: 'ログインしました',
+    });
+
     res.json({
       token,
       user: { id: user.id, name: user.name, email: user.email },
@@ -94,6 +101,12 @@ router.post('/change-password', authMiddleware, async (req, res) => {
       'UPDATE users SET password_hash=$1, is_temp_password=0, updated_at=NOW() WHERE id=$2',
       [newHash, req.user.id]
     );
+    await logActivity(req.user.id, {
+      action: 'update',
+      targetType: 'account',
+      targetId: req.user.id,
+      summary: 'パスワードを変更しました',
+    });
     res.json({ message: 'パスワードを変更しました' });
   } catch (err) {
     res.status(500).json({ error: err.message });

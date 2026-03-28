@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
+const { logActivity } = require('../utils/activityLog');
 
 async function resolveProgressSource(projectId, progressRecordId, progressCommentId) {
   let recordId = progressRecordId || null;
@@ -85,6 +86,13 @@ router.post('/', async (req, res) => {
         pcId,
       ]
     );
+    await logActivity(req.user.id, {
+      action: 'create',
+      targetType: 'task',
+      targetId: id,
+      summary: `タスク「${title}」を作成しました`,
+      detail: { project_id: project_id },
+    });
     res.status(201).json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -100,6 +108,14 @@ router.put('/:id', async (req, res) => {
       [title, description, status, priority, assignee, due_date, req.params.id]
     );
     if (rowCount === 0) return res.status(404).json({ error: 'Task not found' });
+    const t = rows[0];
+    await logActivity(req.user.id, {
+      action: 'update',
+      targetType: 'task',
+      targetId: t.id,
+      summary: `タスク「${t.title || '（無題）'}」を更新しました`,
+      detail: { project_id: t.project_id },
+    });
     res.json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -108,8 +124,17 @@ router.put('/:id', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
   try {
+    const { rows: tr } = await pool.query('SELECT title, project_id FROM tasks WHERE id = $1', [req.params.id]);
     const { rowCount } = await pool.query('DELETE FROM tasks WHERE id = $1', [req.params.id]);
     if (rowCount === 0) return res.status(404).json({ error: 'Task not found' });
+    const t = tr[0];
+    await logActivity(req.user.id, {
+      action: 'delete',
+      targetType: 'task',
+      targetId: req.params.id,
+      summary: `タスク「${t?.title || '（無題）'}」を削除しました`,
+      detail: t?.project_id ? { project_id: t.project_id } : undefined,
+    });
     res.json({ message: 'Task deleted' });
   } catch (err) {
     res.status(500).json({ error: err.message });

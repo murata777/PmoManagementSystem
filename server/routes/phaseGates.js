@@ -3,6 +3,7 @@ const router = express.Router({ mergeParams: true });
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
 const { validateAndNormalizeCommentInput } = require('../utils/commentPayload');
+const { logActivity } = require('../utils/activityLog');
 
 // Helper: ensure phase_gate row exists and return its id
 async function ensurePhaseGate(client, projectId, phaseKey) {
@@ -98,6 +99,14 @@ router.put('/:phaseKey', async (req, res) => {
       [id, projectId, phaseKey, status]
     );
     await client.query('COMMIT');
+    const { rows: pr } = await pool.query('SELECT name FROM projects WHERE id = $1', [projectId]);
+    await logActivity(req.user.id, {
+      action: 'update',
+      targetType: 'phase_gate',
+      targetId: rows[0].id,
+      summary: `プロジェクト「${pr[0]?.name || ''}」のフェーズ「${phaseKey}」ステータスを更新しました`,
+      detail: { project_id: projectId, phase_key: phaseKey, status },
+    });
     res.json(rows[0]);
   } catch (err) {
     await client.query('ROLLBACK');
@@ -138,6 +147,14 @@ router.put('/:phaseKey/metrics', async (req, res) => {
     );
     const result = {};
     for (const r of rows) result[r.metric_key] = r.value;
+    const { rows: pr } = await pool.query('SELECT name FROM projects WHERE id = $1', [projectId]);
+    await logActivity(req.user.id, {
+      action: 'update',
+      targetType: 'phase_gate',
+      targetId: pgId,
+      summary: `プロジェクト「${pr[0]?.name || ''}」のフェーズ「${phaseKey}」指標を更新しました`,
+      detail: { project_id: projectId, phase_key: phaseKey },
+    });
     res.json({ metrics: result });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -179,6 +196,14 @@ router.post('/:phaseKey/comments', async (req, res) => {
        WHERE pgc.id = $1`,
       [rows[0].id]
     );
+    const { rows: pr } = await pool.query('SELECT name FROM projects WHERE id = $1', [projectId]);
+    await logActivity(req.user.id, {
+      action: 'create',
+      targetType: 'phase_gate_comment',
+      targetId: full[0].id,
+      summary: `プロジェクト「${pr[0]?.name || ''}」のフェーズ「${phaseKey}」にコメントを投稿しました`,
+      detail: { project_id: projectId, phase_key: phaseKey },
+    });
     res.status(201).json(full[0]);
   } catch (err) {
     await client.query('ROLLBACK');
@@ -190,13 +215,21 @@ router.post('/:phaseKey/comments', async (req, res) => {
 
 // DELETE /:phaseKey/comments/:commentId - コメント削除（自分のコメントのみ）
 router.delete('/:phaseKey/comments/:commentId', async (req, res) => {
-  const { commentId } = req.params;
+  const { projectId, phaseKey, commentId } = req.params;
   try {
     const { rowCount } = await pool.query(
       `DELETE FROM phase_gate_comments WHERE id = $1 AND user_id = $2`,
       [commentId, req.user.id]
     );
     if (rowCount === 0) return res.status(404).json({ error: 'コメントが見つかりません' });
+    const { rows: pr } = await pool.query('SELECT name FROM projects WHERE id = $1', [projectId]);
+    await logActivity(req.user.id, {
+      action: 'delete',
+      targetType: 'phase_gate_comment',
+      targetId: commentId,
+      summary: `プロジェクト「${pr[0]?.name || ''}」のフェーズ「${phaseKey}」コメントを削除しました`,
+      detail: { project_id: projectId, phase_key: phaseKey },
+    });
     res.json({ message: '削除しました' });
   } catch (err) {
     res.status(500).json({ error: err.message });

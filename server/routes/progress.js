@@ -3,6 +3,7 @@ const router = express.Router({ mergeParams: true });
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
 const { validateAndNormalizeCommentInput, plainTextFromStoredComment } = require('../utils/commentPayload');
+const { logActivity } = require('../utils/activityLog');
 
 async function canAccess(userId, projectId) {
   const { rows } = await pool.query(
@@ -124,6 +125,14 @@ router.post('/', async (req, res) => {
         req.user.id,
         JSON.stringify(normalizedLinks)]
     );
+    const { rows: pr } = await pool.query('SELECT name FROM projects WHERE id = $1', [projectId]);
+    await logActivity(req.user.id, {
+      action: 'create',
+      targetType: 'progress_record',
+      targetId: id,
+      summary: `プロジェクト「${pr[0]?.name || ''}」に進捗記録（${String(record_date).trim()}）を追加しました`,
+      detail: { project_id: projectId },
+    });
     res.status(201).json({ ...withNormalizedLinks(rows[0]), comments: [] });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -139,7 +148,23 @@ router.put('/:recordId', async (req, res) => {
     if (!(await canAccess(req.user.id, projectId))) {
       return res.status(403).json({ error: 'アクセス権限がありません' });
     }
+    const { rows: prevRows } = await pool.query(
+      'SELECT evaluation FROM progress_records WHERE id = $1 AND project_id = $2',
+      [recordId, projectId]
+    );
+    if (!prevRows[0]) {
+      return res.status(404).json({ error: '記録が見つかりません' });
+    }
+    const prevEval = prevRows[0].evaluation;
+
     const normalizedLinks = links !== undefined ? normalizeProgressLinks(links) : null;
+    const evalProvided = evaluation !== undefined;
+    const evalValue = evalProvided
+      ? evaluation != null && String(evaluation).trim() !== ''
+        ? String(evaluation)
+        : null
+      : null;
+
     const { rows } = await pool.query(
       `UPDATE progress_records
        SET record_date = COALESCE($1, record_date),
@@ -147,22 +172,50 @@ router.put('/:recordId', async (req, res) => {
            pv = $3,
            ev = $4,
            ac = $5,
-           evaluation = $6,
+           evaluation = CASE WHEN $10::boolean THEN $6::text ELSE evaluation END,
            links = COALESCE($9::jsonb, links),
            updated_at = NOW()
        WHERE id = $7 AND project_id = $8
        RETURNING *`,
-      [record_date != null && String(record_date).trim() !== '' ? String(record_date).trim() : null,
+      [
+        record_date != null && String(record_date).trim() !== '' ? String(record_date).trim() : null,
         toNumericOrNull(bac),
         toNumericOrNull(pv),
         toNumericOrNull(ev),
         toNumericOrNull(ac),
-        evaluation !== undefined ? (evaluation != null && String(evaluation).trim() !== '' ? String(evaluation) : null) : null,
+        evalValue,
         recordId,
         projectId,
-        normalizedLinks !== null ? JSON.stringify(normalizedLinks) : null]
+        normalizedLinks !== null ? JSON.stringify(normalizedLinks) : null,
+        evalProvided,
+      ]
     );
     if (rows.length === 0) return res.status(404).json({ error: '記録が見つかりません' });
+
+    const newEval = rows[0].evaluation;
+    const evalChanged =
+      evalProvided && String(prevEval ?? '') !== String(newEval ?? '');
+
+    const { rows: pr } = await pool.query('SELECT name FROM projects WHERE id = $1', [projectId]);
+    const projectLabel = pr[0]?.name || '';
+    const dateLabel = rows[0].record_date;
+    const preview =
+      newEval != null && String(newEval).trim() !== ''
+        ? String(newEval).replace(/\s+/g, ' ').trim().slice(0, 120)
+        : '';
+
+    await logActivity(req.user.id, {
+      action: 'update',
+      targetType: evalChanged ? 'progress_evaluation' : 'progress_record',
+      targetId: recordId,
+      summary: evalChanged
+        ? `プロジェクト「${projectLabel}」の進捗（${dateLabel}）の評価コメントを保存しました`
+        : `プロジェクト「${projectLabel}」の進捗記録（${dateLabel}）を更新しました`,
+      detail: {
+        project_id: projectId,
+        ...(evalChanged && preview ? { evaluation_preview: preview } : {}),
+      },
+    });
     res.json(withNormalizedLinks(rows[0]));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -176,11 +229,23 @@ router.delete('/:recordId', async (req, res) => {
     if (!(await canAccess(req.user.id, projectId))) {
       return res.status(403).json({ error: 'アクセス権限がありません' });
     }
+    const { rows: rr } = await pool.query(
+      `SELECT record_date FROM progress_records WHERE id = $1 AND project_id = $2`,
+      [recordId, projectId]
+    );
     const { rowCount } = await pool.query(
       `DELETE FROM progress_records WHERE id = $1 AND project_id = $2`,
       [recordId, projectId]
     );
     if (rowCount === 0) return res.status(404).json({ error: '記録が見つかりません' });
+    const { rows: pr } = await pool.query('SELECT name FROM projects WHERE id = $1', [projectId]);
+    await logActivity(req.user.id, {
+      action: 'delete',
+      targetType: 'progress_record',
+      targetId: recordId,
+      summary: `プロジェクト「${pr[0]?.name || ''}」の進捗記録（${rr[0]?.record_date || ''}）を削除しました`,
+      detail: { project_id: projectId },
+    });
     res.json({ message: '削除しました' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -224,6 +289,14 @@ router.post('/:recordId/duplicate', async (req, res) => {
         JSON.stringify(normalizeProgressLinks(src.links)),
       ]
     );
+    const { rows: pr } = await pool.query('SELECT name FROM projects WHERE id = $1', [projectId]);
+    await logActivity(req.user.id, {
+      action: 'duplicate',
+      targetType: 'progress_record',
+      targetId: newId,
+      summary: `プロジェクト「${pr[0]?.name || ''}」で進捗記録を複製しました（記録日 ${newDate}）`,
+      detail: { project_id: projectId, source_record_id: recordId },
+    });
     res.status(201).json({ ...withNormalizedLinks(inserted[0]), comments: [] });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -263,6 +336,14 @@ router.post('/:recordId/comments', async (req, res) => {
        WHERE pc.id = $1`,
       [rows[0].id]
     );
+    const { rows: pr } = await pool.query('SELECT name FROM projects WHERE id = $1', [projectId]);
+    await logActivity(req.user.id, {
+      action: 'create',
+      targetType: 'progress_comment',
+      targetId: full[0].id,
+      summary: `プロジェクト「${pr[0]?.name || ''}」の進捗タイムラインにコメントを投稿しました`,
+      detail: { project_id: projectId, record_id: recordId },
+    });
     res.status(201).json(full[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -319,6 +400,14 @@ router.post('/:recordId/comments/:commentId/add-task', async (req, res) => {
        WHERE pc.id = $1`,
       [commentId]
     );
+    const { rows: pr } = await pool.query('SELECT name FROM projects WHERE id = $1', [projectId]);
+    await logActivity(req.user.id, {
+      action: 'create',
+      targetType: 'task',
+      targetId: taskId,
+      summary: `プロジェクト「${pr[0]?.name || ''}」の進捗コメントからタスクを作成しました`,
+      detail: { project_id: projectId, progress_record_id: recordId, progress_comment_id: commentId },
+    });
     res.status(201).json({ task: taskRows[0], comment: full[0] });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -372,6 +461,14 @@ router.post('/:recordId/add-evaluation-task', async (req, res) => {
     await client.query('COMMIT');
     const { rows: taskRows } = await pool.query('SELECT * FROM tasks WHERE id = $1', [taskId]);
     const { rows: recRows } = await pool.query('SELECT * FROM progress_records WHERE id = $1', [recordId]);
+    const { rows: pr } = await pool.query('SELECT name FROM projects WHERE id = $1', [projectId]);
+    await logActivity(req.user.id, {
+      action: 'create',
+      targetType: 'task',
+      targetId: taskId,
+      summary: `プロジェクト「${pr[0]?.name || ''}」の評価コメントからタスクを作成しました`,
+      detail: { project_id: projectId, progress_record_id: recordId },
+    });
     res.status(201).json({ task: taskRows[0], record: recRows[0] });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -395,6 +492,14 @@ router.delete('/:recordId/comments/:commentId', async (req, res) => {
       [commentId, req.user.id, projectId, recordId]
     );
     if (rowCount === 0) return res.status(404).json({ error: 'コメントが見つかりません' });
+    const { rows: pr } = await pool.query('SELECT name FROM projects WHERE id = $1', [projectId]);
+    await logActivity(req.user.id, {
+      action: 'delete',
+      targetType: 'progress_comment',
+      targetId: commentId,
+      summary: `プロジェクト「${pr[0]?.name || ''}」の進捗タイムラインコメントを削除しました`,
+      detail: { project_id: projectId, record_id: recordId },
+    });
     res.json({ message: '削除しました' });
   } catch (err) {
     res.status(500).json({ error: err.message });

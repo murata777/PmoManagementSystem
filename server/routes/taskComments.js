@@ -3,6 +3,7 @@ const router = express.Router({ mergeParams: true });
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
 const { validateAndNormalizeCommentInput } = require('../utils/commentPayload');
+const { logActivity } = require('../utils/activityLog');
 
 const ALLOWED_TASK_STATUS = new Set(['todo', 'inprogress', 'review', 'done']);
 
@@ -112,6 +113,18 @@ router.post('/', async (req, res) => {
        ORDER BY tc.created_at ASC`,
       [inserted]
     );
+    const { rows: tr } = await pool.query('SELECT title, project_id FROM tasks WHERE id = $1', [req.params.taskId]);
+    const parts = [];
+    if (hasComment) parts.push('コメント');
+    if (assigneeChanged) parts.push('担当者');
+    if (statusDbUpdate) parts.push('ステータス');
+    await logActivity(req.user.id, {
+      action: 'update',
+      targetType: 'task',
+      targetId: req.params.taskId,
+      summary: `タスク「${tr[0]?.title || '（無題）'}」の${parts.join('・')}を更新しました`,
+      detail: { project_id: tr[0]?.project_id },
+    });
     res.status(201).json(full);
   } catch (err) {
     await client.query('ROLLBACK');
@@ -124,11 +137,19 @@ router.post('/', async (req, res) => {
 // DELETE a comment (only by owner, only comment type)
 router.delete('/:commentId', async (req, res) => {
   try {
+    const { rows: tr } = await pool.query('SELECT title, project_id FROM tasks WHERE id = $1', [req.params.taskId]);
     const { rowCount } = await pool.query(
       "DELETE FROM task_comments WHERE id=$1 AND task_id=$2 AND user_id=$3 AND comment_type='comment'",
       [req.params.commentId, req.params.taskId, req.user.id]
     );
     if (rowCount === 0) return res.status(404).json({ error: 'コメントが見つかりません' });
+    await logActivity(req.user.id, {
+      action: 'delete',
+      targetType: 'task_comment',
+      targetId: req.params.commentId,
+      summary: `タスク「${tr[0]?.title || '（無題）'}」のコメントを削除しました`,
+      detail: { project_id: tr[0]?.project_id, task_id: req.params.taskId },
+    });
     res.json({ message: '削除しました' });
   } catch (err) {
     res.status(500).json({ error: err.message });

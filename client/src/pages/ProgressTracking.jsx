@@ -357,6 +357,8 @@ export default function ProgressTracking() {
   const [taskAddInFlight, setTaskAddInFlight] = useState(null);
   /** 下書きから直近作成したタスクID（再追加を阻害しない） */
   const [lastDraftTaskByRecord, setLastDraftTaskByRecord] = useState({});
+  /** グラフで選んだ記録を「今回」欄に表示（null なら最新） */
+  const [evmKonkaiFocusId, setEvmKonkaiFocusId] = useState(null);
 
   const taskAddKey = {
     comment: (commentId) => `comment:${commentId}`,
@@ -418,9 +420,17 @@ export default function ProgressTracking() {
       });
 
   useEffect(() => {
+    setEvmKonkaiFocusId(null);
     loadProject();
     loadRecords();
   }, [id]);
+
+  useEffect(() => {
+    if (evmKonkaiFocusId == null) return;
+    if (!records.some((r) => r.id === evmKonkaiFocusId)) {
+      setEvmKonkaiFocusId(null);
+    }
+  }, [records, evmKonkaiFocusId]);
 
   useEffect(() => {
     const hash = location.hash || '';
@@ -691,8 +701,9 @@ export default function ProgressTracking() {
   const progressEvalHash = (recordId) => `evm-eval-${recordId}`;
 
   // グラフ用データ（record_date ASC）
-  const chartData = records.map(r => ({
+  const chartData = records.map((r) => ({
     date: r.record_date,
+    recordId: r.id,
     PV: r.pv !== null && r.pv !== undefined ? Number(r.pv) : null,
     EV: r.ev !== null && r.ev !== undefined ? Number(r.ev) : null,
     AC: r.ac !== null && r.ac !== undefined ? Number(r.ac) : null,
@@ -701,6 +712,45 @@ export default function ProgressTracking() {
 
   // 表示は record_date DESC
   const sortedRecords = [...records].sort((a, b) => b.record_date.localeCompare(a.record_date));
+
+  const setKonkaiFromChart = (recordId) => {
+    if (recordId == null) return;
+    setEvmKonkaiFocusId(recordId);
+  };
+
+  const pickRecordIdFromChartClickState = (state) => {
+    if (!state || typeof state !== 'object') return null;
+    const idx = state.activeTooltipIndex;
+    if (typeof idx === 'number' && chartData[idx]?.recordId != null) {
+      return chartData[idx].recordId;
+    }
+    const label = state.activeLabel;
+    if (label != null) {
+      const row = chartData.find((d) => d.date === label);
+      if (row?.recordId != null) return row.recordId;
+    }
+    return null;
+  };
+
+  const evmChartDot = (strokeColor) => (dotProps) => {
+    const { cx, cy, payload } = dotProps;
+    if (cx == null || cy == null || payload?.recordId == null) return null;
+    return (
+      <circle
+        cx={cx}
+        cy={cy}
+        r={4}
+        fill={strokeColor}
+        stroke="#fff"
+        strokeWidth={1}
+        style={{ cursor: 'pointer' }}
+        onClick={(e) => {
+          e.stopPropagation();
+          setKonkaiFromChart(payload.recordId);
+        }}
+      />
+    );
+  };
 
   if (!project) return null;
 
@@ -748,18 +798,48 @@ export default function ProgressTracking() {
           <CardContent>
             <Typography variant="h6" gutterBottom>EVM推移グラフ</Typography>
             <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+              <LineChart
+                data={chartData}
+                margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                onClick={(state) => {
+                  const rid = pickRecordIdFromChartClickState(state);
+                  if (rid != null) setKonkaiFromChart(rid);
+                }}
+              >
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" />
+                <XAxis
+                  dataKey="date"
+                  tick={(tickProps) => {
+                    const { x, y, payload, fill } = tickProps;
+                    const dateVal = payload?.value;
+                    return (
+                      <text
+                        x={x}
+                        y={y}
+                        dy={16}
+                        textAnchor="middle"
+                        fill={fill ?? '#666'}
+                        style={{ cursor: 'pointer' }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const rec = records.find((r) => r.record_date === dateVal);
+                          if (rec) setKonkaiFromChart(rec.id);
+                        }}
+                      >
+                        {dateVal}
+                      </text>
+                    );
+                  }}
+                />
                 <YAxis />
                 <ReTooltip />
                 <Legend />
                 {maxBac > 0 && (
                   <ReferenceLine y={maxBac} stroke="#9e9e9e" strokeDasharray="6 3" label={{ value: 'BAC', position: 'right', fill: '#9e9e9e' }} />
                 )}
-                <Line type="monotone" dataKey="PV" stroke="#1976d2" strokeWidth={2} dot={true} connectNulls />
-                <Line type="monotone" dataKey="EV" stroke="#388e3c" strokeWidth={2} dot={true} connectNulls />
-                <Line type="monotone" dataKey="AC" stroke="#d32f2f" strokeWidth={2} dot={true} connectNulls />
+                <Line type="monotone" dataKey="PV" stroke="#1976d2" strokeWidth={2} dot={evmChartDot('#1976d2')} connectNulls />
+                <Line type="monotone" dataKey="EV" stroke="#388e3c" strokeWidth={2} dot={evmChartDot('#388e3c')} connectNulls />
+                <Line type="monotone" dataKey="AC" stroke="#d32f2f" strokeWidth={2} dot={evmChartDot('#d32f2f')} connectNulls />
               </LineChart>
             </ResponsiveContainer>
           </CardContent>
@@ -771,8 +851,20 @@ export default function ProgressTracking() {
         <Typography color="text.secondary">進捗記録がありません。「+ 新規進捗記録」から追加してください。</Typography>
       ) : (
         (() => {
-          const current = sortedRecords[0] || null;
-          const previous = sortedRecords[1] || null;
+          const latest = sortedRecords[0] || null;
+          const focusRecord =
+            evmKonkaiFocusId != null
+              ? records.find((r) => r.id === evmKonkaiFocusId) ?? latest
+              : latest;
+          const recordsAsc = [...records].sort((a, b) => a.record_date.localeCompare(b.record_date));
+          const focusIdx = focusRecord ? recordsAsc.findIndex((r) => r.id === focusRecord.id) : -1;
+          const previousFromFocus = focusIdx > 0 ? recordsAsc[focusIdx - 1] : null;
+
+          const current = focusRecord;
+          const previous = previousFromFocus;
+
+          const shownTopIds = new Set([current?.id, previous?.id].filter(Boolean));
+          const restRecords = sortedRecords.filter((r) => !shownTopIds.has(r.id));
 
           const renderRecordCard = (record, headerLabel) => {
             if (!record) return null;
@@ -1286,15 +1378,15 @@ export default function ProgressTracking() {
                   </Grid>
                 </Grid>
               ) : (
-                renderRecordCard(current || previous, '')
+                renderRecordCard(current || previous, sortedRecords.length === 1 ? '' : '今回')
               )}
 
-              {sortedRecords.length > 2 ? (
+              {restRecords.length > 0 ? (
                 <Box sx={{ mt: 1 }}>
                   <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
                     過去の記録
                   </Typography>
-                  {sortedRecords.slice(2).map((r) => renderRecordCard(r, ''))}
+                  {restRecords.map((r) => renderRecordCard(r, ''))}
                 </Box>
               ) : null}
             </Box>

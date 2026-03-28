@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import {
   Box, Typography, Button, Card, CardContent, CardActions, Grid,
   Dialog, DialogTitle, DialogContent, DialogActions, TextField,
   IconButton, Chip, Avatar, Alert, Divider, List, ListItem,
   ListItemAvatar, ListItemText, ListItemSecondaryAction, MenuItem, Select,
-  FormControl, InputLabel, Tooltip
+  FormControl, InputLabel, Tooltip, Paper,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -15,6 +15,25 @@ import { groupsApi, membersApi } from '../api';
 
 const EMPTY_FORM = { name: '', description: '' };
 
+function normalizeSearch(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function matchesGroupSearch(g, qRaw) {
+  const q = normalizeSearch(qRaw);
+  if (!q) return true;
+  const terms = q.split(' ').filter(Boolean);
+  if (terms.length === 0) return true;
+  const n = g.member_count ?? 0;
+  const blob = normalizeSearch(
+    [g.name, g.description, String(n), `${n}名`].join(' ')
+  );
+  return terms.every((t) => blob.includes(t));
+}
+
 export default function Groups() {
   const [groups, setGroups] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
@@ -24,6 +43,26 @@ export default function Groups() {
   const [error, setError] = useState('');
   const [detailGroup, setDetailGroup] = useState(null);
   const [addUserId, setAddUserId] = useState('');
+  const [searchText, setSearchText] = useState('');
+  const [filterMembers, setFilterMembers] = useState('');
+
+  const filteredGroups = useMemo(
+    () =>
+      groups.filter((g) => {
+        const n = g.member_count ?? 0;
+        if (filterMembers === 'empty' && n !== 0) return false;
+        if (filterMembers === 'has' && n === 0) return false;
+        if (!matchesGroupSearch(g, searchText)) return false;
+        return true;
+      }),
+    [groups, filterMembers, searchText]
+  );
+
+  useEffect(() => {
+    if (detailGroup && !filteredGroups.some((g) => g.id === detailGroup.id)) {
+      setDetailGroup(null);
+    }
+  }, [filteredGroups, detailGroup]);
 
   const loadGroups = () => groupsApi.getAll().then(res => setGroups(res.data));
   const loadUsers = () => membersApi.getAll().then(res => setAllUsers(res.data));
@@ -91,11 +130,44 @@ export default function Groups() {
         <Button variant="contained" startIcon={<AddIcon />} onClick={() => handleOpen()}>グループ作成</Button>
       </Box>
 
+      <Paper sx={{ p: 2, mb: 2 }}>
+        <Grid container spacing={2}>
+          <Grid size={{ xs: 12 }}>
+            <TextField
+              label="キーワード検索（名前・説明・メンバー数）"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              fullWidth
+              size="small"
+              placeholder="複数語は空白区切り（すべて含む行のみ表示）"
+            />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+            <TextField
+              select
+              label="メンバー数"
+              value={filterMembers}
+              onChange={(e) => setFilterMembers(e.target.value)}
+              fullWidth
+              size="small"
+            >
+              <MenuItem value="">すべて</MenuItem>
+              <MenuItem value="empty">0名</MenuItem>
+              <MenuItem value="has">1名以上</MenuItem>
+            </TextField>
+          </Grid>
+        </Grid>
+      </Paper>
+
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+        {filteredGroups.length} 件表示（全 {groups.length} 件）
+      </Typography>
+
       <Grid container spacing={3}>
         {/* グループ一覧 */}
         <Grid item xs={12} md={detailGroup ? 5 : 12}>
           <Grid container spacing={2}>
-            {groups.map(g => (
+            {filteredGroups.map(g => (
               <Grid item xs={12} sm={detailGroup ? 12 : 6} md={detailGroup ? 12 : 4} key={g.id}>
                 <Card
                   sx={{ cursor: 'pointer', border: detailGroup?.id === g.id ? '2px solid' : '1px solid', borderColor: detailGroup?.id === g.id ? 'primary.main' : 'divider' }}
@@ -123,6 +195,11 @@ export default function Groups() {
             {groups.length === 0 && (
               <Grid item xs={12}>
                 <Typography color="text.secondary" align="center">グループがありません</Typography>
+              </Grid>
+            )}
+            {groups.length > 0 && filteredGroups.length === 0 && (
+              <Grid item xs={12}>
+                <Typography color="text.secondary" align="center">条件に一致するグループがありません</Typography>
               </Grid>
             )}
           </Grid>

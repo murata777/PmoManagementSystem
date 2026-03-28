@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
+const { logActivity } = require('../utils/activityLog');
 
 function spiCpiFromPevAc(pv, ev, ac) {
   const n = (v) => (v !== null && v !== undefined && v !== '' ? Number(v) : null);
@@ -113,6 +114,12 @@ router.post('/', async (req, res) => {
       [id, name, description, status || 'planning', priority || 'medium', start_date, end_date, manager, group_id || null]
     );
     const { rows } = await pool.query(`${projectWithEvmSql} WHERE p.id = $1`, [id]);
+    await logActivity(req.user.id, {
+      action: 'create',
+      targetType: 'project',
+      targetId: id,
+      summary: `プロジェクト「${name}」を作成しました`,
+    });
     res.status(201).json(attachLatestEvm(rows[0]));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -173,6 +180,13 @@ router.post('/:id/duplicate', async (req, res) => {
 
     await client.query('COMMIT');
     const { rows } = await pool.query(`${projectWithEvmSql} WHERE p.id = $1`, [newId]);
+    await logActivity(req.user.id, {
+      action: 'duplicate',
+      targetType: 'project',
+      targetId: newId,
+      summary: `プロジェクト「${newName}」を複製しました`,
+      detail: { source_project_id: sourceId },
+    });
     res.status(201).json(attachLatestEvm(rows[0]));
   } catch (err) {
     try {
@@ -211,6 +225,12 @@ router.put('/:id', async (req, res) => {
       [name, description, status, priority, start_date, end_date, manager, group_id, process_type, req.params.id]
     );
     const { rows } = await pool.query(`${projectWithEvmSql} WHERE p.id = $1`, [req.params.id]);
+    await logActivity(req.user.id, {
+      action: 'update',
+      targetType: 'project',
+      targetId: req.params.id,
+      summary: `プロジェクト「${name}」を更新しました`,
+    });
     res.json(attachLatestEvm(rows[0]));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -223,9 +243,17 @@ router.delete('/:id', async (req, res) => {
     return res.status(403).json({ error: 'アクセス権限がありません' });
   }
   try {
+    const { rows: nmRows } = await pool.query('SELECT name FROM projects WHERE id = $1', [req.params.id]);
+    const deletedName = nmRows[0]?.name || req.params.id;
     await pool.query('DELETE FROM tasks WHERE project_id = $1', [req.params.id]);
     const { rowCount } = await pool.query('DELETE FROM projects WHERE id = $1', [req.params.id]);
     if (rowCount === 0) return res.status(404).json({ error: 'Project not found' });
+    await logActivity(req.user.id, {
+      action: 'delete',
+      targetType: 'project',
+      targetId: req.params.id,
+      summary: `プロジェクト「${deletedName}」を削除しました`,
+    });
     res.json({ message: 'Project deleted' });
   } catch (err) {
     res.status(500).json({ error: err.message });

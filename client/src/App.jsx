@@ -6,8 +6,11 @@ import {
 } from '@mui/material';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import FolderIcon from '@mui/icons-material/Folder';
+import AssignmentIcon from '@mui/icons-material/Assignment';
 import PeopleIcon from '@mui/icons-material/People';
 import GroupIcon from '@mui/icons-material/Group';
+import HistoryIcon from '@mui/icons-material/History';
+import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import Dashboard from './pages/Dashboard';
 import Projects from './pages/Projects';
@@ -21,21 +24,32 @@ import ForgotPassword from './pages/ForgotPassword';
 import PhaseGate from './pages/PhaseGate';
 import ProgressTracking from './pages/ProgressTracking';
 import PhaseProgressTabLayout from './pages/PhaseProgressTabLayout';
+import TaskList from './pages/TaskList';
+import ActivityHistory from './pages/ActivityHistory';
+import NotificationSettings from './pages/NotificationSettings';
 import { getStoredUser, clearAuth } from './auth';
 
 const DRAWER_WIDTH = 220;
 
 const navItems = [
   { text: 'ダッシュボード', icon: <DashboardIcon />, path: '/' },
-  { text: 'プロジェクト', icon: <FolderIcon />, path: '/projects' },
+  { text: 'プロジェクト一覧', icon: <FolderIcon />, path: '/projects' },
+  { text: 'タスク一覧', icon: <AssignmentIcon />, path: '/tasks' },
+  { text: '操作履歴', icon: <HistoryIcon />, path: '/activity-history' },
+  { text: '通知設定', icon: <NotificationsActiveIcon />, path: '/settings/notifications' },
   { text: 'グループ', icon: <GroupIcon />, path: '/groups' },
   { text: 'メンバー', icon: <PeopleIcon />, path: '/members' },
 ];
 
 function NavList() {
   const location = useLocation();
-  const isSelected = (path) =>
-    path === '/' ? location.pathname === '/' : location.pathname.startsWith(path);
+  const isSelected = (path) => {
+    if (path === '/') return location.pathname === '/';
+    if (path === '/tasks') return location.pathname === '/tasks';
+    if (path === '/activity-history') return location.pathname === '/activity-history';
+    if (path === '/settings/notifications') return location.pathname === '/settings/notifications';
+    return location.pathname.startsWith(path);
+  };
   return (
     <List sx={{ px: 1, py: 1.5 }}>
       {navItems.map((item) => {
@@ -123,6 +137,9 @@ function AppLayout({ user, onLogout }) {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/projects" element={<Projects />} />
+          <Route path="/tasks" element={<TaskList />} />
+          <Route path="/activity-history" element={<ActivityHistory />} />
+          <Route path="/settings/notifications" element={<NotificationSettings />} />
           <Route path="/projects/:id" element={<ProjectDetail />} />
           <Route element={<PhaseProgressTabLayout />}>
             <Route path="/projects/:id/phase-gates" element={<PhaseGate />} />

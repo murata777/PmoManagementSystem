@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
 const { sendInitialPassword } = require('../mailer');
+const { logActivity } = require('../utils/activityLog');
 
 function generateTempPassword(length = 10) {
   const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
@@ -47,6 +48,12 @@ router.post('/', async (req, res) => {
       console.error('Mail error:', mailErr.message);
     }
 
+    await logActivity(req.user.id, {
+      action: 'create',
+      targetType: 'member',
+      targetId: id,
+      summary: `メンバー「${name}」を追加しました`,
+    });
     res.status(201).json({ ...rows[0], tempPassword });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -76,8 +83,15 @@ router.delete('/:id', async (req, res) => {
     return res.status(400).json({ error: '自分自身のアカウントは削除できません' });
   }
   try {
+    const { rows: ur } = await pool.query('SELECT name FROM users WHERE id = $1', [req.params.id]);
     const { rowCount } = await pool.query('DELETE FROM users WHERE id = $1', [req.params.id]);
     if (rowCount === 0) return res.status(404).json({ error: 'メンバーが見つかりません' });
+    await logActivity(req.user.id, {
+      action: 'delete',
+      targetType: 'member',
+      targetId: req.params.id,
+      summary: `メンバー「${ur[0]?.name || req.params.id}」を削除しました`,
+    });
     res.json({ message: 'メンバーを削除しました' });
   } catch (err) {
     res.status(500).json({ error: err.message });

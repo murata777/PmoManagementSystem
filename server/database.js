@@ -169,6 +169,39 @@ async function initDB() {
   await pool.query(`ALTER TABLE progress_records ADD COLUMN IF NOT EXISTS links JSONB NOT NULL DEFAULT '[]'::jsonb`);
   await pool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS progress_record_id TEXT REFERENCES progress_records(id) ON DELETE SET NULL`);
   await pool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS progress_comment_id TEXT REFERENCES progress_comments(id) ON DELETE SET NULL`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS activity_logs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      action TEXT NOT NULL,
+      target_type TEXT NOT NULL,
+      target_id TEXT,
+      summary TEXT NOT NULL,
+      detail JSONB,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_activity_logs_created_at ON activity_logs (created_at DESC)`
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS activity_email_settings (
+      id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+      enabled INTEGER NOT NULL DEFAULT 0,
+      project_scope TEXT NOT NULL DEFAULT 'all',
+      project_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      group_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      exclude_login INTEGER NOT NULL DEFAULT 1,
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    INSERT INTO activity_email_settings (id, enabled, project_scope, project_ids, group_ids, exclude_login)
+    VALUES (1, 0, 'all', '[]'::jsonb, '[]'::jsonb, 1)
+    ON CONFLICT (id) DO NOTHING
+  `);
 }
 
 initDB().catch(console.error);

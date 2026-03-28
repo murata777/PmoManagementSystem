@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import {
   Box, Typography, Button, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, Paper, IconButton, Dialog, DialogTitle,
-  DialogContent, DialogActions, TextField, Avatar, Chip, Alert
+  DialogContent, DialogActions, TextField, Avatar, Chip, Alert, Grid, MenuItem,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -13,6 +13,25 @@ import { getStoredUser } from '../auth';
 
 const EMPTY_FORM = { name: '', email: '', role: '', department: '' };
 
+function normalizeSearch(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function matchesMemberSearch(m, qRaw) {
+  const q = normalizeSearch(qRaw);
+  if (!q) return true;
+  const terms = q.split(' ').filter(Boolean);
+  if (terms.length === 0) return true;
+  const statusLabel = m.is_temp_password ? '初期pw未変更' : '有効';
+  const blob = normalizeSearch(
+    [m.name, m.email, m.role, m.department, statusLabel].join(' ')
+  );
+  return terms.every((t) => blob.includes(t));
+}
+
 export default function Members() {
   const [members, setMembers] = useState([]);
   const [open, setOpen] = useState(false);
@@ -21,6 +40,42 @@ export default function Members() {
   const [error, setError] = useState('');
   const [newTempPassword, setNewTempPassword] = useState('');
   const currentUser = getStoredUser();
+
+  const [searchText, setSearchText] = useState('');
+  const [filterRole, setFilterRole] = useState('');
+  const [filterDepartment, setFilterDepartment] = useState('');
+  const [filterPassword, setFilterPassword] = useState('');
+
+  const roleOptions = useMemo(() => {
+    const set = new Set();
+    members.forEach((m) => {
+      const r = String(m.role || '').trim();
+      if (r) set.add(r);
+    });
+    return [...set].sort((a, b) => a.localeCompare(b, 'ja'));
+  }, [members]);
+
+  const departmentOptions = useMemo(() => {
+    const set = new Set();
+    members.forEach((m) => {
+      const d = String(m.department || '').trim();
+      if (d) set.add(d);
+    });
+    return [...set].sort((a, b) => a.localeCompare(b, 'ja'));
+  }, [members]);
+
+  const filteredMembers = useMemo(
+    () =>
+      members.filter((m) => {
+        if (filterRole && String(m.role || '').trim() !== filterRole) return false;
+        if (filterDepartment && String(m.department || '').trim() !== filterDepartment) return false;
+        if (filterPassword === 'temp' && !m.is_temp_password) return false;
+        if (filterPassword === 'ok' && m.is_temp_password) return false;
+        if (!matchesMemberSearch(m, searchText)) return false;
+        return true;
+      }),
+    [members, filterRole, filterDepartment, filterPassword, searchText]
+  );
 
   const load = () => membersApi.getAll().then((res) => setMembers(res.data));
   useEffect(() => { load(); }, []);
@@ -84,7 +139,7 @@ export default function Members() {
             </TableRow>
           </TableHead>
           <TableBody>
-            {members.map((m) => (
+            {filteredMembers.map((m) => (
               <TableRow key={m.id} hover>
                 <TableCell>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -122,6 +177,9 @@ export default function Members() {
             ))}
             {members.length === 0 && (
               <TableRow><TableCell colSpan={6} align="center">メンバーがいません</TableCell></TableRow>
+            )}
+            {members.length > 0 && filteredMembers.length === 0 && (
+              <TableRow><TableCell colSpan={6} align="center">条件に一致するメンバーがありません</TableCell></TableRow>
             )}
           </TableBody>
         </Table>

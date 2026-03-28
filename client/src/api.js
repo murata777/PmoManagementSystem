@@ -31,7 +31,9 @@ export const projectsApi = {
 };
 
 export const tasksApi = {
-  getAll: (projectId) => api.get('/tasks', { params: { project_id: projectId } }),
+  /** @param {string} [projectId] 省略時は全プロジェクトのタスク */
+  getAll: (projectId) =>
+    api.get('/tasks', projectId ? { params: { project_id: projectId } } : {}),
   create: (data) => api.post('/tasks', data),
   update: (id, data) => api.put(`/tasks/${id}`, data),
   delete: (id) => api.delete(`/tasks/${id}`),
@@ -46,6 +48,10 @@ export const membersApi = {
 
 export const dashboardApi = {
   getStats: () => api.get('/dashboard'),
+};
+
+export const activityLogsApi = {
+  getAll: (params) => api.get('/activity-logs', { params }),
 };
 
 export const customFieldsApi = {
@@ -82,6 +88,13 @@ export const progressApi = {
     api.post(`/projects/${projectId}/progress/${recordId}/comments/${commentId}/add-task`),
   addEvaluationAsTask: (projectId, recordId, body) =>
     api.post(`/projects/${projectId}/progress/${recordId}/add-evaluation-task`, body || {}),
+};
+
+export const settingsApi = {
+  getMailStatus: () => api.get('/settings/mail-status'),
+  getActivityNotification: () => api.get('/settings/activity-notification'),
+  /** POST を使う（一部のプロキシ・静的ホスティングで PUT が 404 になるため）。サーバーは PUT も受け付けます。 */
+  updateActivityNotification: (data) => api.post('/settings/activity-notification', data),
 };
 
 export const groupsApi = {
