@@ -92,9 +92,10 @@ export const progressApi = {
 
 export const settingsApi = {
   getMailStatus: () => api.get('/settings/mail-status'),
-  getActivityNotification: () => api.get('/settings/activity-notification'),
-  /** POST を使う（一部のプロキシ・静的ホスティングで PUT が 404 になるため）。サーバーは PUT も受け付けます。 */
-  updateActivityNotification: (data) => api.post('/settings/activity-notification', data),
+  listActivityNotifications: () => api.get('/settings/activity-notifications'),
+  createActivityNotification: (data) => api.post('/settings/activity-notifications', data),
+  updateActivityNotification: (id, data) => api.put(`/settings/activity-notifications/${id}`, data),
+  deleteActivityNotification: (id) => api.delete(`/settings/activity-notifications/${id}`),
 };
 
 export const groupsApi = {
@@ -105,4 +106,26 @@ export const groupsApi = {
   delete: (id) => api.delete(`/groups/${id}`),
   addMember: (groupId, userId) => api.post(`/groups/${groupId}/members`, { user_id: userId }),
   removeMember: (groupId, userId) => api.delete(`/groups/${groupId}/members/${userId}`),
+};
+
+export const favoritesApi = {
+  getAll: () => api.get('/favorites'),
+  add: (path, label) => api.post('/favorites', { path, label }),
+  delete: (id) => api.delete(`/favorites/${id}`),
+  reorder: (order) => api.put('/favorites/reorder', { order }),
+};
+
+/** ログインユーザー専用の個人 ToDo（プロジェクトタスクとは別） */
+export const myTodosApi = {
+  getAll: () => api.get('/my-todos'),
+  create: (data) => api.post('/my-todos', data),
+  update: (id, data) => api.put(`/my-todos/${id}`, data),
+  delete: (id) => api.delete(`/my-todos/${id}`),
+  reorder: (order) => api.put('/my-todos/reorder', { order }),
+};
+
+/** 要望の投稿は全員。一覧 GET は管理者のみ（403 時は呼び出さないこと） */
+export const featureRequestsApi = {
+  create: (data) => api.post('/feature-requests', data),
+  listAll: () => api.get('/feature-requests'),
 };

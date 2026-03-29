@@ -1,5 +1,12 @@
 const express = require('express');
 const router = express.Router({ mergeParams: true });
+const { sendSafeServerError } = require('../utils/httpErrorResponse');
+const { isUuid } = require('../middleware/validateUuidParams');
+
+router.param('fieldId', (req, res, next, fieldId) => {
+  if (!isUuid(fieldId)) return res.status(400).json({ error: '無効なIDです' });
+  next();
+});
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
 const { logActivity } = require('../utils/activityLog');
@@ -15,7 +22,7 @@ router.get('/', async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -43,7 +50,7 @@ router.post('/', async (req, res) => {
     });
     res.status(201).json(rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -64,7 +71,7 @@ router.put('/:fieldId', async (req, res) => {
     if (rowCount === 0) return res.status(404).json({ error: '項目が見つかりません' });
     res.json(rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -90,7 +97,7 @@ router.delete('/:fieldId', async (req, res) => {
     });
     res.json({ message: '削除しました' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 

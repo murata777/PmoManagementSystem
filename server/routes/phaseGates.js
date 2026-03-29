@@ -1,5 +1,9 @@
 const express = require('express');
 const router = express.Router({ mergeParams: true });
+const { requireUuidParamsIfPresent } = require('../middleware/requireUuidParams');
+const { sendSafeServerError } = require('../utils/httpErrorResponse');
+
+router.use(requireUuidParamsIfPresent('commentId'));
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
 const { validateAndNormalizeCommentInput } = require('../utils/commentPayload');
@@ -78,7 +82,7 @@ router.get('/', async (req, res) => {
 
     res.json({ processType, gates: result });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -110,7 +114,7 @@ router.put('/:phaseKey', async (req, res) => {
     res.json(rows[0]);
   } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   } finally {
     client.release();
   }
@@ -158,7 +162,7 @@ router.put('/:phaseKey/metrics', async (req, res) => {
     res.json({ metrics: result });
   } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   } finally {
     client.release();
   }
@@ -207,7 +211,7 @@ router.post('/:phaseKey/comments', async (req, res) => {
     res.status(201).json(full[0]);
   } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   } finally {
     client.release();
   }
@@ -232,7 +236,7 @@ router.delete('/:phaseKey/comments/:commentId', async (req, res) => {
     });
     res.json({ message: '削除しました' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 

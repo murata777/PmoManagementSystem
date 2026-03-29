@@ -1,12 +1,21 @@
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 require('dotenv').config();
 const { Pool } = require('pg');
+const { v4: uuidv4 } = require('uuid');
+
+// pg は password に undefined を渡すと SASL: client password must be a string になる
+const dbPassword =
+  process.env.DB_PASSWORD == null || process.env.DB_PASSWORD === ''
+    ? ''
+    : String(process.env.DB_PASSWORD);
 
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: Number(process.env.DB_PORT) || 5432,
   database: process.env.DB_NAME || 'pmo',
   user: process.env.DB_USER || 'pmo',
-  password: process.env.DB_PASSWORD,
+  password: dbPassword,
   options: '-c timezone=UTC',
 });
 
@@ -202,6 +211,95 @@ async function initDB() {
     VALUES (1, 0, 'all', '[]'::jsonb, '[]'::jsonb, 1)
     ON CONFLICT (id) DO NOTHING
   `);
+
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin INTEGER NOT NULL DEFAULT 0`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS activity_notification_configs (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL DEFAULT '',
+      enabled INTEGER NOT NULL DEFAULT 0,
+      project_scope TEXT NOT NULL DEFAULT 'all',
+      project_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      group_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      exclude_login INTEGER NOT NULL DEFAULT 1,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    UPDATE users u SET is_admin = 1
+    WHERE NOT EXISTS (SELECT 1 FROM users WHERE is_admin = 1)
+      AND u.id = (SELECT id FROM users ORDER BY created_at ASC NULLS LAST LIMIT 1)
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_favorites (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      path TEXT NOT NULL,
+      label TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE (user_id, path)
+    )
+  `);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_user_favorites_user_sort ON user_favorites (user_id, sort_order)`
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_personal_todos (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      notes TEXT,
+      due_date TEXT,
+      completed INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_user_personal_todos_user ON user_personal_todos (user_id, completed, sort_order)`
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS feature_requests (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      body TEXT,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_feature_requests_created ON feature_requests (created_at DESC)`
+  );
+
+  const { rows: cfgCount } = await pool.query('SELECT COUNT(*)::int AS c FROM activity_notification_configs');
+  if (cfgCount[0].c === 0) {
+    const { rows: oldRows } = await pool.query('SELECT * FROM activity_email_settings WHERE id = 1');
+    if (oldRows[0]) {
+      const o = oldRows[0];
+      await pool.query(
+        `INSERT INTO activity_notification_configs (id, name, enabled, project_scope, project_ids, group_ids, exclude_login, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::timestamp, NOW()), COALESCE($8::timestamp, NOW()))`,
+        [
+          uuidv4(),
+          'デフォルト',
+          o.enabled,
+          o.project_scope,
+          o.project_ids,
+          o.group_ids,
+          o.exclude_login,
+          o.updated_at,
+        ]
+      );
+    }
+  }
 }
 
 initDB().catch(console.error);

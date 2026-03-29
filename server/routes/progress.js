@@ -1,8 +1,33 @@
 const express = require('express');
 const router = express.Router({ mergeParams: true });
+const { requireUuidParamsIfPresent } = require('../middleware/requireUuidParams');
+const { sendSafeServerError } = require('../utils/httpErrorResponse');
+
+router.use(requireUuidParamsIfPresent('recordId', 'commentId'));
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
-const { validateAndNormalizeCommentInput, plainTextFromStoredComment } = require('../utils/commentPayload');
+const {
+  validateAndNormalizeCommentInput,
+  plainTextFromStoredComment,
+  parseStoredComment,
+} = require('../utils/commentPayload');
+
+function normalizeEvaluationField(raw) {
+  if (raw === undefined) return { provided: false, value: null, error: null };
+  if (raw === null || String(raw).trim() === '') return { provided: true, value: null, error: null };
+  const norm = validateAndNormalizeCommentInput(String(raw));
+  if (!norm.ok) return { provided: true, value: null, error: norm.error };
+  return { provided: true, value: norm.value, error: null };
+}
+
+/** タスクタイトル用（JSON 評価本文から） */
+function evaluationTaskTitleFromStored(raw) {
+  const { text, images } = parseStoredComment(String(raw ?? ''));
+  const tr = text.trim();
+  if (tr) return tr.length > 500 ? `${tr.slice(0, 497)}…` : tr;
+  if (images.length > 0) return '（画像付き進捗報告）';
+  return '';
+}
 const { logActivity } = require('../utils/activityLog');
 
 async function canAccess(userId, projectId) {
@@ -94,7 +119,7 @@ router.get('/', async (req, res) => {
 
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -112,6 +137,11 @@ router.post('/', async (req, res) => {
   try {
     const id = uuidv4();
     const normalizedLinks = normalizeProgressLinks(links);
+    const evalNorm = normalizeEvaluationField(evaluation);
+    if (evalNorm.error) {
+      return res.status(400).json({ error: evalNorm.error });
+    }
+    const evalToStore = evalNorm.provided ? evalNorm.value : null;
     const { rows } = await pool.query(
       `INSERT INTO progress_records (id, project_id, record_date, bac, pv, ev, ac, evaluation, created_by, links)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
@@ -121,7 +151,7 @@ router.post('/', async (req, res) => {
         toNumericOrNull(pv),
         toNumericOrNull(ev),
         toNumericOrNull(ac),
-        evaluation != null && String(evaluation).trim() !== '' ? String(evaluation) : null,
+        evalToStore,
         req.user.id,
         JSON.stringify(normalizedLinks)]
     );
@@ -135,7 +165,7 @@ router.post('/', async (req, res) => {
     });
     res.status(201).json({ ...withNormalizedLinks(rows[0]), comments: [] });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -159,11 +189,14 @@ router.put('/:recordId', async (req, res) => {
 
     const normalizedLinks = links !== undefined ? normalizeProgressLinks(links) : null;
     const evalProvided = evaluation !== undefined;
-    const evalValue = evalProvided
-      ? evaluation != null && String(evaluation).trim() !== ''
-        ? String(evaluation)
-        : null
-      : null;
+    let evalValue = null;
+    if (evalProvided) {
+      const evalNorm = normalizeEvaluationField(evaluation);
+      if (evalNorm.error) {
+        return res.status(400).json({ error: evalNorm.error });
+      }
+      evalValue = evalNorm.value;
+    }
 
     const { rows } = await pool.query(
       `UPDATE progress_records
@@ -201,7 +234,7 @@ router.put('/:recordId', async (req, res) => {
     const dateLabel = rows[0].record_date;
     const preview =
       newEval != null && String(newEval).trim() !== ''
-        ? String(newEval).replace(/\s+/g, ' ').trim().slice(0, 120)
+        ? plainTextFromStoredComment(String(newEval)).replace(/\s+/g, ' ').trim().slice(0, 120)
         : '';
 
     await logActivity(req.user.id, {
@@ -209,7 +242,7 @@ router.put('/:recordId', async (req, res) => {
       targetType: evalChanged ? 'progress_evaluation' : 'progress_record',
       targetId: recordId,
       summary: evalChanged
-        ? `プロジェクト「${projectLabel}」の進捗（${dateLabel}）の評価コメントを保存しました`
+        ? `プロジェクト「${projectLabel}」の進捗（${dateLabel}）の進捗報告内容を保存しました`
         : `プロジェクト「${projectLabel}」の進捗記録（${dateLabel}）を更新しました`,
       detail: {
         project_id: projectId,
@@ -218,7 +251,7 @@ router.put('/:recordId', async (req, res) => {
     });
     res.json(withNormalizedLinks(rows[0]));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -248,11 +281,11 @@ router.delete('/:recordId', async (req, res) => {
     });
     res.json({ message: '削除しました' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
-// POST /:recordId/duplicate — EVM（BAC/PV/EV/AC・評価コメント）のみ複製。タイムライン・タスク紐付けは含まない
+// POST /:recordId/duplicate — EVM（BAC/PV/EV/AC・進捗報告内容）のみ複製。タイムライン・タスク紐付けは含まない
 router.post('/:recordId/duplicate', async (req, res) => {
   const { projectId, recordId } = req.params;
   const { record_date: bodyRecordDate } = req.body || {};
@@ -299,7 +332,7 @@ router.post('/:recordId/duplicate', async (req, res) => {
     });
     res.status(201).json({ ...withNormalizedLinks(inserted[0]), comments: [] });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -346,7 +379,7 @@ router.post('/:recordId/comments', async (req, res) => {
     });
     res.status(201).json(full[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -411,13 +444,13 @@ router.post('/:recordId/comments/:commentId/add-task', async (req, res) => {
     res.status(201).json({ task: taskRows[0], comment: full[0] });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   } finally {
     client.release();
   }
 });
 
-// POST /:recordId/add-evaluation-task — 評価コメントからタスクを1件だけ作成して紐付け
+// POST /:recordId/add-evaluation-task — 進捗報告内容からタスクを1件だけ作成して紐付け
 router.post('/:recordId/add-evaluation-task', async (req, res) => {
   const { projectId, recordId } = req.params;
   const { evaluation: evaluationBody } = req.body || {};
@@ -441,14 +474,15 @@ router.post('/:recordId/add-evaluation-task', async (req, res) => {
       return res.status(409).json({ error: '既にタスクに追加済みです', task_id: rec.evaluation_linked_task_id });
     }
     const fromBody = evaluationBody != null && String(evaluationBody).trim() !== '';
-    const title = (fromBody ? String(evaluationBody).trim() : String(rec.evaluation || '').trim());
+    const sourceForTitle = fromBody ? String(evaluationBody) : String(rec.evaluation || '');
+    const title = evaluationTaskTitleFromStored(sourceForTitle).trim();
     if (!title) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: '評価コメントを入力してください' });
+      return res.status(400).json({ error: '進捗報告内容を入力してください' });
     }
     const safeTitle = title.length > 500 ? `${title.slice(0, 497)}…` : title;
     const taskId = uuidv4();
-    const desc = `進捗確認（EVM）／記録日 ${rec.record_date} の評価コメントより`;
+    const desc = `進捗確認（EVM）／記録日 ${rec.record_date} の進捗報告内容より`;
     await client.query(
       `INSERT INTO tasks (id, project_id, title, description, status, priority, progress_record_id, progress_comment_id)
        VALUES ($1, $2, $3, $4, 'todo', 'medium', $5, NULL)`,
@@ -466,13 +500,13 @@ router.post('/:recordId/add-evaluation-task', async (req, res) => {
       action: 'create',
       targetType: 'task',
       targetId: taskId,
-      summary: `プロジェクト「${pr[0]?.name || ''}」の評価コメントからタスクを作成しました`,
+      summary: `プロジェクト「${pr[0]?.name || ''}」の進捗報告内容からタスクを作成しました`,
       detail: { project_id: projectId, progress_record_id: recordId },
     });
     res.status(201).json({ task: taskRows[0], record: recRows[0] });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   } finally {
     client.release();
   }
@@ -502,7 +536,7 @@ router.delete('/:recordId/comments/:commentId', async (req, res) => {
     });
     res.json({ message: '削除しました' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 

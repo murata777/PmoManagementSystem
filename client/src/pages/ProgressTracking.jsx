@@ -28,10 +28,28 @@ import CommentRichContent from '../components/CommentRichContent';
 import PastedImagesPreview from '../components/PastedImagesPreview';
 import {
   encodeCommentForStorage,
+  decodeCommentStored,
   tryConsumeClipboardImageAsDataUrl,
   plainTextForTaskTitleFromDraft,
   MAX_PASTED_IMAGES_PER_COMMENT,
 } from '../utils/commentImages';
+
+function evaluationsEquivalent(stored, textOverride, imgsOverride) {
+  const d = decodeCommentStored(stored || '');
+  const t = textOverride !== undefined ? textOverride : d.text;
+  const imgs = imgsOverride !== undefined ? imgsOverride : d.images;
+  return d.text === t && JSON.stringify(d.images) === JSON.stringify(imgs);
+}
+
+function getEvalText(record, evalEditing) {
+  return evalEditing[record.id] !== undefined ? evalEditing[record.id] : decodeCommentStored(record.evaluation || '').text;
+}
+
+function getEvalImages(record, evalPastedImages) {
+  return evalPastedImages[record.id] !== undefined
+    ? evalPastedImages[record.id]
+    : decodeCommentStored(record.evaluation || '').images;
+}
 
 const TASK_STATUS = [
   { value: 'todo', label: '未着手' },
@@ -330,6 +348,7 @@ export default function ProgressTracking() {
   const [addForm, setAddForm] = useState({
     record_date: '', bac: '', pv: '', ev: '', ac: '', evaluation: '', links: [emptyLink()],
   });
+  const [addEvalPastedImages, setAddEvalPastedImages] = useState([]);
   const [addSaving, setAddSaving] = useState(false);
   const [addError, setAddError] = useState('');
 
@@ -343,17 +362,19 @@ export default function ProgressTracking() {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({ bac: '', pv: '', ev: '', ac: '', links: [] });
 
-  // 評価コメント編集
+  // 進捗報告内容の編集
   const [evalEditing, setEvalEditing] = useState({});
 
   // コメント入力
   const [commentInput, setCommentInput] = useState({});
   /** recordId -> 貼り付け画像 data URL */
   const [commentPastedImages, setCommentPastedImages] = useState({});
+  /** 進捗報告内容（EVM）用 貼り付け画像 recordId -> dataUrl[] */
+  const [evalPastedImages, setEvalPastedImages] = useState({});
 
   // タスク追加フィードバック（成功・失敗・警告）
   const [snack, setSnack] = useState({ message: '', severity: 'success', taskLinkId: null, taskStatus: null });
-  /** 進行中の「タスクに追加」操作（コメント／評価／下書きごと。全体で1つにしない） */
+  /** 進行中の「タスクに追加」操作（コメント／進捗報告／下書きごと。全体で1つにしない） */
   const [taskAddInFlight, setTaskAddInFlight] = useState(null);
   /** 下書きから直近作成したタスクID（再追加を阻害しない） */
   const [lastDraftTaskByRecord, setLastDraftTaskByRecord] = useState({});
@@ -449,17 +470,19 @@ export default function ProgressTracking() {
     setAddError('');
     setAddSaving(true);
     try {
+      const evPayload = encodeCommentForStorage(addForm.evaluation, addEvalPastedImages);
       await progressApi.create(id, {
         record_date: addForm.record_date,
         bac: addForm.bac,
         pv: addForm.pv,
         ev: addForm.ev,
         ac: addForm.ac,
-        evaluation: addForm.evaluation,
+        ...(evPayload ? { evaluation: evPayload } : {}),
         links: sanitizeLinksForSave(addForm.links),
       });
       setAddOpen(false);
       setAddForm({ record_date: '', bac: '', pv: '', ev: '', ac: '', evaluation: '', links: [emptyLink()] });
+      setAddEvalPastedImages([]);
       loadRecords();
     } catch (e) {
       const msg = e.response?.data?.error || e.message || '保存に失敗しました';
@@ -535,17 +558,29 @@ export default function ProgressTracking() {
     loadRecords();
   };
 
-  // 評価コメント保存
+  // 進捗報告内容の保存
   const handleEvalSave = async (record) => {
+    const t = getEvalText(record, evalEditing);
+    const im = getEvalImages(record, evalPastedImages);
+    const payload = encodeCommentForStorage(t, im);
     await progressApi.update(id, record.id, {
       record_date: record.record_date,
       bac: record.bac,
       pv: record.pv,
       ev: record.ev,
       ac: record.ac,
-      evaluation: evalEditing[record.id] !== undefined ? evalEditing[record.id] : record.evaluation,
+      evaluation: payload || null,
     });
-    setEvalEditing(prev => { const n = { ...prev }; delete n[record.id]; return n; });
+    setEvalEditing((prev) => {
+      const n = { ...prev };
+      delete n[record.id];
+      return n;
+    });
+    setEvalPastedImages((prev) => {
+      const n = { ...prev };
+      delete n[record.id];
+      return n;
+    });
     loadRecords();
   };
 
@@ -613,16 +648,16 @@ export default function ProgressTracking() {
     if (record.evaluation_linked_task_id) return;
     const k = taskAddKey.eval(record.id);
     if (taskAddInFlight === k) return;
-    const evaluation = String(
-      evalEditing[record.id] !== undefined ? evalEditing[record.id] : (record.evaluation || '')
-    ).trim();
-    if (!evaluation) {
-      setSnack({ message: '評価コメントを入力してください', severity: 'warning', taskLinkId: null, taskStatus: null });
+    const t = getEvalText(record, evalEditing);
+    const im = getEvalImages(record, evalPastedImages);
+    const evaluationPayload = encodeCommentForStorage(t, im);
+    if (!evaluationPayload) {
+      setSnack({ message: '進捗報告内容を入力してください', severity: 'warning', taskLinkId: null, taskStatus: null });
       return;
     }
     setTaskAddInFlight(k);
     try {
-      const res = await progressApi.addEvaluationAsTask(id, record.id, { evaluation });
+      const res = await progressApi.addEvaluationAsTask(id, record.id, { evaluation: evaluationPayload });
       await Promise.all([loadRecords(), loadProject()]);
       const tid = res.data?.task?.id;
       setSnack({
@@ -871,8 +906,14 @@ export default function ProgressTracking() {
             const comments = Array.isArray(record.comments) ? record.comments : [];
             const evm = calcEVM(record.bac, record.pv, record.ev, record.ac);
             const isEditing = editingId === record.id;
-            const evalVal = evalEditing[record.id] !== undefined ? evalEditing[record.id] : (record.evaluation || '');
-            const isEvalDirty = evalEditing[record.id] !== undefined && evalEditing[record.id] !== (record.evaluation || '');
+            const evalText = getEvalText(record, evalEditing);
+            const evalImgs = getEvalImages(record, evalPastedImages);
+            const isEvalDirty = !evaluationsEquivalent(
+              record.evaluation,
+              evalEditing[record.id],
+              evalPastedImages[record.id]
+            );
+            const evalHasContent = Boolean(encodeCommentForStorage(evalText, evalImgs));
             const evalTaskMeta = record.evaluation_linked_task_id
               ? taskStatusMeta(record.evaluation_linked_task_id)
               : null;
@@ -894,7 +935,7 @@ export default function ProgressTracking() {
                       <Typography variant="h6">{record.record_date}</Typography>
                     </Box>
                     <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                      <Tooltip title="EVMを複製（BAC/PV/EV/AC・評価のみ。コメントは含みません）">
+                      <Tooltip title="EVMを複製（BAC/PV/EV/AC・進捗報告内容のみ。タイムラインのコメントは含みません）">
                         <span>
                           <IconButton
                             size="small"
@@ -1104,18 +1145,53 @@ export default function ProgressTracking() {
                     </Typography>
                   </Box>
 
-                  {/* 評価コメント */}
+                  {/* 進捗報告内容 */}
                   <Box sx={{ mb: 2 }}>
-                    <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>評価コメント</Typography>
+                    <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.5 }}>
+                      進捗報告内容
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+                      画面キャプチャはこの欄に貼り付け（Ctrl+V）できます（最大 {MAX_PASTED_IMAGES_PER_COMMENT} 枚）。
+                    </Typography>
+                    <PastedImagesPreview
+                      images={evalImgs}
+                      max={MAX_PASTED_IMAGES_PER_COMMENT}
+                      onRemove={(index) =>
+                        setEvalPastedImages((prev) => {
+                          const rid = record.id;
+                          const base =
+                            prev[rid] !== undefined
+                              ? [...prev[rid]]
+                              : [...decodeCommentStored(record.evaluation || '').images];
+                          base.splice(index, 1);
+                          return { ...prev, [rid]: base };
+                        })
+                      }
+                    />
                     <Box id={`evm-eval-${record.id}`} sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', flexWrap: 'wrap', scrollMarginTop: 88 }}>
                       <TextField
                         multiline
                         minRows={2}
                         fullWidth
                         size="small"
-                        placeholder="評価コメントを入力..."
-                        value={evalVal}
-                        onChange={e => setEvalEditing(prev => ({ ...prev, [record.id]: e.target.value }))}
+                        placeholder="進捗報告の内容を入力...（画像は貼り付け）"
+                        value={evalText}
+                        onChange={(e) => setEvalEditing((prev) => ({ ...prev, [record.id]: e.target.value }))}
+                        onPaste={async (e) => {
+                          const url = await tryConsumeClipboardImageAsDataUrl(e.clipboardData);
+                          if (url) {
+                            e.preventDefault();
+                            setEvalPastedImages((prev) => {
+                              const rid = record.id;
+                              const base =
+                                prev[rid] !== undefined
+                                  ? [...prev[rid]]
+                                  : [...decodeCommentStored(record.evaluation || '').images];
+                              if (base.length >= MAX_PASTED_IMAGES_PER_COMMENT) return prev;
+                              return { ...prev, [rid]: [...base, url] };
+                            });
+                          }
+                        }}
                         sx={{ flex: '1 1 240px', minWidth: 0 }}
                       />
                       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, alignItems: 'stretch' }}>
@@ -1149,7 +1225,7 @@ export default function ProgressTracking() {
                               color="text.secondary"
                               sx={{ whiteSpace: 'nowrap' }}
                             >
-                              この評価コメント位置へ
+                              この進捗報告位置へ
                             </Link>
                           </Box>
                         ) : (
@@ -1157,11 +1233,11 @@ export default function ProgressTracking() {
                             variant="outlined"
                             size="small"
                             startIcon={<PlaylistAddIcon />}
-                            disabled={taskAddInFlight === taskAddKey.eval(record.id) || !String(evalVal || '').trim()}
+                            disabled={taskAddInFlight === taskAddKey.eval(record.id) || !evalHasContent}
                             onClick={() => handleAddEvalAsTask(record)}
                             sx={{ whiteSpace: 'nowrap' }}
                           >
-                            評価をタスクに追加
+                            進捗報告をタスクに追加
                           </Button>
                         )}
                       </Box>
@@ -1403,7 +1479,7 @@ export default function ProgressTracking() {
             </Alert>
           ) : null}
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            BAC・PV・EV・AC・評価コメントをコピーして新しい進捗記録を追加します。タイムラインのコメントとタスクへの紐付けは含みません。
+            BAC・PV・EV・AC・進捗報告内容をコピーして新しい進捗記録を追加します。タイムラインのコメントとタスクへの紐付けは含みません。
           </Typography>
           <TextField
             label="新しい記録日 *"
@@ -1498,14 +1574,38 @@ export default function ProgressTracking() {
               />
             </Grid>
           </Grid>
+          <Typography variant="caption" color="text.secondary" display="block">
+            進捗報告内容（画像は Ctrl+V で貼り付け、最大 {MAX_PASTED_IMAGES_PER_COMMENT} 枚）
+          </Typography>
+          <PastedImagesPreview
+            images={addEvalPastedImages}
+            max={MAX_PASTED_IMAGES_PER_COMMENT}
+            onRemove={(index) =>
+              setAddEvalPastedImages((cur) => {
+                const next = [...cur];
+                next.splice(index, 1);
+                return next;
+              })
+            }
+          />
           <TextField
-            label="評価コメント"
+            label="進捗報告内容"
             multiline
             rows={3}
             value={addForm.evaluation}
-            onChange={e => setAddForm(prev => ({ ...prev, evaluation: e.target.value }))}
+            onChange={(e) => setAddForm((prev) => ({ ...prev, evaluation: e.target.value }))}
+            onPaste={async (e) => {
+              const url = await tryConsumeClipboardImageAsDataUrl(e.clipboardData);
+              if (url) {
+                e.preventDefault();
+                setAddEvalPastedImages((cur) => {
+                  if (cur.length >= MAX_PASTED_IMAGES_PER_COMMENT) return cur;
+                  return [...cur, url];
+                });
+              }
+            }}
             fullWidth
-            placeholder="この時点での評価・コメントを入力..."
+            placeholder="この時点の進捗・状況を入力...（画像は貼り付け）"
           />
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
             <Typography variant="subtitle2" color="text.secondary">参照リンク（URL / ファイルパス、複数可）</Typography>

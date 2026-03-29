@@ -3,6 +3,13 @@ const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
 const { logActivity } = require('../utils/activityLog');
+const { isUuid } = require('../middleware/validateUuidParams');
+const { sendSafeServerError } = require('../utils/httpErrorResponse');
+
+router.param('id', (req, res, next, id) => {
+  if (!isUuid(id)) return res.status(400).json({ error: '無効なIDです' });
+  next();
+});
 
 async function resolveProgressSource(projectId, progressRecordId, progressCommentId) {
   let recordId = progressRecordId || null;
@@ -38,12 +45,15 @@ async function resolveProgressSource(projectId, progressRecordId, progressCommen
 router.get('/', async (req, res) => {
   try {
     const { project_id } = req.query;
+    if (project_id != null && String(project_id).trim() !== '' && !isUuid(String(project_id).trim())) {
+      return res.status(400).json({ error: '無効な project_id です' });
+    }
     const { rows } = project_id
       ? await pool.query('SELECT * FROM tasks WHERE project_id = $1 ORDER BY created_at DESC', [project_id])
       : await pool.query('SELECT * FROM tasks ORDER BY created_at DESC');
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -60,6 +70,7 @@ router.post('/', async (req, res) => {
     progress_comment_id,
   } = req.body;
   if (!project_id || !title) return res.status(400).json({ error: 'project_id and title are required' });
+  if (!isUuid(String(project_id).trim())) return res.status(400).json({ error: '無効な project_id です' });
   const id = uuidv4();
   try {
     let prId = null;
@@ -95,7 +106,7 @@ router.post('/', async (req, res) => {
     });
     res.status(201).json(rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -118,7 +129,7 @@ router.put('/:id', async (req, res) => {
     });
     res.json(rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -137,7 +148,7 @@ router.delete('/:id', async (req, res) => {
     });
     res.json({ message: 'Task deleted' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 

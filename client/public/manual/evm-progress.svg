@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 300" role="img" aria-labelledby="t">
+  <title id="t">EVMr—¡$	n¤áü¸</title>
+  <rect width="640" height="300" fill="#fafafa"/>
+  <text x="320" y="28" font-family="system-ui,sans-serif" font-size="13" fill="#424242" text-anchor="middle" font-weight="600">2WºEVM	n¤áü¸</text>
+  <line x1="80" y1="240" x2="560" y2="240" stroke="#9e9e9e" stroke-width="2"/>
+  <line x1="80" y1="240" x2="80" y2="60" stroke="#9e9e9e" stroke-width="2"/>
+  <rect x="120" y="180" width="48" height="60" fill="#90caf9" opacity="0.9"/>
+  <rect x="200" y="160" width="48" height="80" fill="#64b5f6"/>
+  <rect x="280" y="140" width="48" height="100" fill="#42a5f5"/>
+  <rect x="360" y="150" width="48" height="90" fill="#ffa726"/>
+  <rect x="440" y="170" width="48" height="70" fill="#ef5350"/>
+  <path d="M100 200 Q200 120 320 100 T520 130" fill="none" stroke="#2e7d32" stroke-width="3"/>
+  <text x="140" y="268" font-family="system-ui,sans-serif" font-size="9" fill="#616161">B¹</text>
+  <text x="520" y="268" font-family="system-ui,sans-serif" font-size="9" fill="#616161">B“</text>
+  <rect x="400" y="48" width="200" height="72" rx="4" fill="#e8f5e9" stroke="#a5d6a7"/>
+  <text x="500" y="72" font-family="system-ui,sans-serif" font-size="10" fill="#2e7d32" text-anchor="middle">BAC / PV / EV / AC</text>
+  <text x="500" y="92" font-family="system-ui,sans-serif" font-size="9" fill="#424242" text-anchor="middle">p$’2W2W’Šá</text>
+  <text x="500" y="108" font-family="system-ui,sans-serif" font-size="9" fill="#424242" text-anchor="middle">2W1JkÆ­¹Èû;Ï</text>
+</svg>

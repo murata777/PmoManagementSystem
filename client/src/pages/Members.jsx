@@ -2,7 +2,8 @@ import { useEffect, useState, useMemo } from 'react';
 import {
   Box, Typography, Button, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, Paper, IconButton, Dialog, DialogTitle,
-  DialogContent, DialogActions, TextField, Avatar, Chip, Alert, Grid, MenuItem,
+  DialogContent, DialogActions, TextField, Avatar, Chip, Alert,
+  FormControlLabel, Switch,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -11,7 +12,7 @@ import LockResetIcon from '@mui/icons-material/LockReset';
 import { membersApi } from '../api';
 import { getStoredUser } from '../auth';
 
-const EMPTY_FORM = { name: '', email: '', role: '', department: '' };
+const EMPTY_FORM = { name: '', email: '', role: '', department: '', is_admin: false };
 
 function normalizeSearch(s) {
   return String(s || '')
@@ -26,8 +27,9 @@ function matchesMemberSearch(m, qRaw) {
   const terms = q.split(' ').filter(Boolean);
   if (terms.length === 0) return true;
   const statusLabel = m.is_temp_password ? '初期pw未変更' : '有効';
+  const adminLabel = m.is_admin ? '管理者' : '一般';
   const blob = normalizeSearch(
-    [m.name, m.email, m.role, m.department, statusLabel].join(' ')
+    [m.name, m.email, m.role, m.department, statusLabel, adminLabel].join(' ')
   );
   return terms.every((t) => blob.includes(t));
 }
@@ -82,7 +84,17 @@ export default function Members() {
 
   const handleOpen = (member = null) => {
     setEditing(member);
-    setForm(member ? { name: member.name, email: member.email, role: member.role || '', department: member.department || '' } : EMPTY_FORM);
+    setForm(
+      member
+        ? {
+            name: member.name,
+            email: member.email,
+            role: member.role || '',
+            department: member.department || '',
+            is_admin: Boolean(member.is_admin),
+          }
+        : EMPTY_FORM
+    );
     setError('');
     setNewTempPassword('');
     setOpen(true);
@@ -92,10 +104,22 @@ export default function Members() {
     setError('');
     try {
       if (editing) {
-        await membersApi.update(editing.id, form);
+        await membersApi.update(editing.id, {
+          name: form.name,
+          email: form.email,
+          role: form.role,
+          department: form.department,
+          ...(currentUser?.is_admin ? { is_admin: form.is_admin } : {}),
+        });
         setOpen(false);
       } else {
-        const res = await membersApi.create(form);
+        const res = await membersApi.create({
+          name: form.name,
+          email: form.email,
+          role: form.role,
+          department: form.department,
+          ...(currentUser?.is_admin ? { is_admin: form.is_admin } : {}),
+        });
         if (res.data.tempPassword) {
           setNewTempPassword(res.data.tempPassword);
         } else {
@@ -134,6 +158,7 @@ export default function Members() {
               <TableCell>メールアドレス</TableCell>
               <TableCell>役職</TableCell>
               <TableCell>部署</TableCell>
+              <TableCell>権限</TableCell>
               <TableCell>状態</TableCell>
               <TableCell align="right">操作</TableCell>
             </TableRow>
@@ -156,6 +181,13 @@ export default function Members() {
                 <TableCell>{m.role ? <Chip label={m.role} size="small" /> : '-'}</TableCell>
                 <TableCell>{m.department || '-'}</TableCell>
                 <TableCell>
+                  {m.is_admin ? (
+                    <Chip label="管理者" color="secondary" size="small" />
+                  ) : (
+                    <Chip label="一般" variant="outlined" size="small" />
+                  )}
+                </TableCell>
+                <TableCell>
                   {m.is_temp_password ? (
                     <Chip icon={<LockResetIcon />} label="初期PW未変更" color="warning" size="small" />
                   ) : (
@@ -176,10 +208,10 @@ export default function Members() {
               </TableRow>
             ))}
             {members.length === 0 && (
-              <TableRow><TableCell colSpan={6} align="center">メンバーがいません</TableCell></TableRow>
+              <TableRow><TableCell colSpan={7} align="center">メンバーがいません</TableCell></TableRow>
             )}
             {members.length > 0 && filteredMembers.length === 0 && (
-              <TableRow><TableCell colSpan={6} align="center">条件に一致するメンバーがありません</TableCell></TableRow>
+              <TableRow><TableCell colSpan={7} align="center">条件に一致するメンバーがありません</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
@@ -228,6 +260,18 @@ export default function Members() {
                 onChange={(e) => setForm({ ...form, department: e.target.value })}
                 fullWidth
               />
+              {currentUser?.is_admin ? (
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={form.is_admin}
+                      onChange={(e) => setForm({ ...form, is_admin: e.target.checked })}
+                      color="secondary"
+                    />
+                  }
+                  label="システム管理者（通知設定の編集など）"
+                />
+              ) : null}
             </>
           )}
         </DialogContent>

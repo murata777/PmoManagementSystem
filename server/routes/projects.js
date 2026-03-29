@@ -3,6 +3,13 @@ const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
 const { logActivity } = require('../utils/activityLog');
+const { isUuid } = require('../middleware/validateUuidParams');
+const { sendSafeServerError } = require('../utils/httpErrorResponse');
+
+router.param('id', (req, res, next, id) => {
+  if (!isUuid(id)) return res.status(400).json({ error: '無効なIDです' });
+  next();
+});
 
 function spiCpiFromPevAc(pv, ev, ac) {
   const n = (v) => (v !== null && v !== undefined && v !== '' ? Number(v) : null);
@@ -83,7 +90,7 @@ router.get('/', async (req, res) => {
     );
     res.json(rows.map(attachLatestEvm));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -98,7 +105,7 @@ router.get('/:id', async (req, res) => {
     const tasks = await pool.query('SELECT * FROM tasks WHERE project_id = $1 ORDER BY created_at DESC', [req.params.id]);
     res.json({ ...attachLatestEvm(rows[0]), tasks: tasks.rows });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -122,7 +129,7 @@ router.post('/', async (req, res) => {
     });
     res.status(201).json(attachLatestEvm(rows[0]));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -192,7 +199,7 @@ router.post('/:id/duplicate', async (req, res) => {
     try {
       await client.query('ROLLBACK');
     } catch (_) { /* noop */ }
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   } finally {
     client.release();
   }
@@ -233,7 +240,7 @@ router.put('/:id', async (req, res) => {
     });
     res.json(attachLatestEvm(rows[0]));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -256,7 +263,7 @@ router.delete('/:id', async (req, res) => {
     });
     res.json({ message: 'Project deleted' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 

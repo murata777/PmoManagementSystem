@@ -1,5 +1,9 @@
 const express = require('express');
 const router = express.Router({ mergeParams: true });
+const { requireUuidParamsIfPresent } = require('../middleware/requireUuidParams');
+const { sendSafeServerError } = require('../utils/httpErrorResponse');
+
+router.use(requireUuidParamsIfPresent('commentId'));
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
 const { validateAndNormalizeCommentInput } = require('../utils/commentPayload');
@@ -20,7 +24,7 @@ router.get('/', async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -128,7 +132,7 @@ router.post('/', async (req, res) => {
     res.status(201).json(full);
   } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   } finally {
     client.release();
   }
@@ -152,7 +156,7 @@ router.delete('/:commentId', async (req, res) => {
     });
     res.json({ message: '削除しました' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 

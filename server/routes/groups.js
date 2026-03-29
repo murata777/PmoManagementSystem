@@ -1,5 +1,16 @@
 const express = require('express');
 const router = express.Router();
+const { isUuid } = require('../middleware/validateUuidParams');
+const { sendSafeServerError } = require('../utils/httpErrorResponse');
+
+router.param('id', (req, res, next, id) => {
+  if (!isUuid(id)) return res.status(400).json({ error: '無効なIDです' });
+  next();
+});
+router.param('userId', (req, res, next, userId) => {
+  if (!isUuid(userId)) return res.status(400).json({ error: '無効なIDです' });
+  next();
+});
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../database');
 const { logActivity } = require('../utils/activityLog');
@@ -20,7 +31,7 @@ router.get('/', async (req, res) => {
     `);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -37,7 +48,7 @@ router.get('/:id', async (req, res) => {
     `, [req.params.id]);
     res.json({ ...group.rows[0], members: members.rows });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -60,7 +71,7 @@ router.post('/', async (req, res) => {
     res.status(201).json({ ...rows[0], member_count: 0 });
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'このグループ名は既に使用されています' });
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -83,7 +94,7 @@ router.put('/:id', async (req, res) => {
     res.json(rows[0]);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'このグループ名は既に使用されています' });
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -101,7 +112,7 @@ router.delete('/:id', async (req, res) => {
     });
     res.json({ message: 'グループを削除しました' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -124,7 +135,7 @@ router.post('/:id/members', async (req, res) => {
     });
     res.json({ message: 'メンバーを追加しました' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
@@ -145,7 +156,7 @@ router.delete('/:id/members/:userId', async (req, res) => {
     });
     res.json({ message: 'メンバーを削除しました' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeServerError(res, err);
   }
 });
 
